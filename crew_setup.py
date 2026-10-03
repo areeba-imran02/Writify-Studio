@@ -5,7 +5,7 @@ from crewai import Agent, Crew, LLM, Process, Task
 import datetime as dt
 
 import guard
-from tools import make_search_tools
+from tools import prefetch_evidence
 
 SEO_DELIMITER = "=====SEO_META====="
 
@@ -84,8 +84,12 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
     llm_seo = build_llm(model, api_key, GEN_WRITER, blog_tokens + 800, safe)
     llm_social = build_llm(model, api_key, GEN_WRITER, 1200, safe)
 
+    # Searches run in plain Python (free, no Gemini quota). Stop BEFORE any Gemini call if nothing real was found.
     sources: list = []
-    web_search, news_search = make_search_tools(sources, topic)
+    evidence_text = prefetch_evidence(topic, cfg.get("keywords", ""), sources)
+    if len(sources) < 2:
+        raise RuntimeError("Not enough real sources were found for this topic, so generation was stopped to avoid "
+                           "made-up content. Try a more specific topic or run again in a minute.")
 
     # Strict topic lock, added to every task to stop drifting / invented content
     lock = (f"\nSTRICT RULES: Stay 100% on the topic '{topic}'. Every sentence must be directly about it. "
@@ -108,16 +112,16 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
         goal=f"Collect accurate, current and well-sourced facts about '{topic}' only.",
         backstory="You are a meticulous analyst. You only report what you can support with a source, "
                   "and you clearly mark anything uncertain. You never invent statistics or URLs.",
-        llm=llm_research, max_iter=5, tools=[web_search, news_search], **common)
+        llm=llm_research, max_iter=3, **common)
     research_t = Task(
         description=(
             f"Research the topic: '{topic}'.\nTarget audience: {audience}.\nFocus keywords: {keywords}.\n"
-            "Use the search tools (maximum 3 searches in total: 1-2 web + 1 news). EVERY search query must contain "
-            f"the main topic words of '{topic}'. Ignore results that are not clearly about this topic. "
-            "Prefer reputable sources (institutions, journals, major publishers).\n"
+            "Below are the REAL search results. They are the ONLY evidence you may use. Ignore any result that is not "
+            "clearly about this topic. Do not search and do not use outside knowledge.\n"
+            f"=== SEARCH RESULTS ===\n{evidence_text}\n=== END OF SEARCH RESULTS ===\n"
             "Write a CONCISE formal research report (max ~800 words) using the structure in the expected output. "
             "Cite sources inline with numbered brackets like [1], [2] and list them in References. "
-            "Only cite URLs that appeared in the search results.\n"
+            "Number citations exactly like the [n] numbers above and only cite those URLs.\n"
             f"{lang_rule}{lock}"),
         expected_output=(
             "A concise formal research report in markdown with EXACTLY these sections, in this order:\n"
@@ -218,13 +222,13 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
             goal="Honestly verify every important claim in the content against the research and the web.",
             backstory="You are a skeptical fact-checker. You flag unsupported, outdated or exaggerated claims "
                       "and never rubber-stamp content. If something is wrong you say so plainly.",
-            llm=llm_check, max_iter=4, tools=[web_search], **common)
+            llm=llm_check, max_iter=3, **common)
         ctx = [research_t] + [t for t in (seo_t or blog_t, li_t, tw_t) if t is not None]
         check_t = Task(
             description=(
                 "Fact-check the generated content against the research notes. List the 5-8 most important "
                 "factual claims. For each give: the claim, a verdict (Verified / Unverified / Incorrect) and "
-                "the evidence or source. You may run up to 2 web searches for doubtful claims. Be honest - "
+                "the evidence or source. Judge only against the research notes. Be honest - "
                 "do not approve claims you cannot support. Also flag any sentence that drifts away from the topic "
                 f"'{topic}'.\nEnd with an overall reliability score out of 10 "
                 f"and a list of exact fixes the author should make. {lang_rule}"),
@@ -240,9 +244,6 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
     # ------------------------------------------------------------------
     # Code-level hallucination guard (links + numbers checked against real search results)
     # ------------------------------------------------------------------
-    if len(sources) < 2:
-        raise RuntimeError("Not enough real sources were found for this topic, so generation was stopped to avoid "
-                           "made-up content. Try a more specific topic or run again in a minute.")
     allowed = guard.allowed_url_set(sources)
     evidence = "\n".join(f"{s['title']} {s.get('body', '')}" for s in sources)
     extra = f"{topic} {keywords} {audience} {dt.date.today().isoformat()}"
