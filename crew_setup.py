@@ -12,6 +12,7 @@ import datetime as dt
 import os
 import queue
 import random
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -50,6 +51,7 @@ PARALLEL = int(os.getenv("WRITIFY_PARALLEL", "3"))            # 1 = run agents o
 TUNE_SAMPLING = os.getenv("WRITIFY_TUNE_SAMPLING", "1") == "1"  # 0 = use Gemini defaults (see note below)
 SEND_THINKING = os.getenv("WRITIFY_THINKING", "on") != "off"    # "off" = never send reasoning_effort
 REQUEST_TIMEOUT = int(os.getenv("WRITIFY_TIMEOUT", "120"))      # seconds; a hung model triggers fallback
+MAX_RUN_SECONDS = int(os.getenv("WRITIFY_MAX_SECONDS", "420"))  # hard stop so the UI never hangs forever
 CACHE_TTL = 3600                                                # reuse research for the same topic for 1 hour
 
 # NOTE: Google recommends leaving temperature/top_p/top_k at their defaults for Gemini 3.x models.
@@ -69,13 +71,20 @@ PROFILES = {
 }
 
 
-def build_llm(model: str, api_key: str, profile: str) -> LLM:
+def build_llm(model: str, api_key: str, profile: str, level: int = 0) -> LLM:
+    """level 0 = all tuning params, 1 = drop top_k + reasoning_effort, 2 = plain model (safest).
+    If a Gemini/CrewAI version rejects an optional parameter, run_step() lowers the level automatically."""
     p = PROFILES[profile]
-    kw = dict(model=model, api_key=api_key, max_tokens=p["max_tokens"], timeout=REQUEST_TIMEOUT)
-    if TUNE_SAMPLING:
-        kw.update(p["sampling"])          # temperature, top_p, top_k (top_k is passed through to Gemini)
-    if SEND_THINKING:
-        kw["reasoning_effort"] = p["thinking"]  # keeps Gemini 3.x "thinking" short = much faster
+    kw = dict(model=model, api_key=api_key, max_tokens=p["max_tokens"])
+    if level < 2:
+        kw["timeout"] = REQUEST_TIMEOUT
+        if TUNE_SAMPLING:
+            kw["temperature"] = p["sampling"]["temperature"]
+            kw["top_p"] = p["sampling"]["top_p"]
+            if level < 1:
+                kw["top_k"] = p["sampling"]["top_k"]
+        if SEND_THINKING and level < 1:
+            kw["reasoning_effort"] = p["thinking"]  # keeps Gemini 3.x "thinking" short = much faster
     return LLM(**kw)
 
 
@@ -86,6 +95,8 @@ class ModelPool:
     def __init__(self, models, api_key):
         self.models, self.api_key = list(models), api_key
         self.cool_until = {m: 0.0 for m in self.models}
+        self.level = 0                 # shared "parameter safety level" (see build_llm)
+        self.t0 = time.time()
         self._lock = threading.Lock()
 
     def available(self):
@@ -99,11 +110,21 @@ class ModelPool:
             with self._lock:
                 self.cool_until[model] = time.time() + seconds
 
+    def degrade(self, seen_level: int) -> bool:
+        """Lower the parameter level once (shared by all threads). True = worth retrying right away."""
+        with self._lock:
+            if self.level > seen_level:
+                return True
+            if self.level < 2:
+                self.level += 1
+                return True
+            return False
+
 
 def classify(err) -> tuple:
-    """-> (kind, cooldown_seconds). kind 'fatal' = do not retry (bad key etc.)."""
+    """-> (kind, cooldown_seconds). 'fatal' = stop (bad key), 'param' = a request parameter was rejected."""
     s = str(err).lower()
-    if any(x in s for x in ("api key", "api_key_invalid", "401", "403", "permission")):
+    if "api key" in s or "api_key_invalid" in s or "permission" in s or re.search(r"\b(401|403)\b", s):
         return "fatal", 0
     if any(x in s for x in ("429", "quota", "rate limit", "resource_exhausted")):
         daily = "per day" in s or "daily" in s or "perday" in s
@@ -112,27 +133,47 @@ def classify(err) -> tuple:
         return "busy", 8
     if "404" in s or "not_found" in s:
         return "gone", 24 * 3600
+    if any(x in s for x in ("400", "invalid_argument", "unexpected keyword", "unknown name", "not supported",
+                            "unsupported", "extra_forbidden", "validation error", "unrecognized")):
+        return "param", 0
     return "other", 0
 
 
 def run_step(pool, label, profile, make, emit, rounds=5):
-    """Run ONE agent/task. On failure only this step switches model; nothing else restarts."""
+    """Run ONE agent/task. On failure only this step switches model; nothing else restarts.
+
+    Every failure is printed to the server log as '[writify] ...' (Streamlit Cloud: Manage app > Logs)."""
     last = None
-    for rnd in range(rounds):
+    rnd = 0
+    while rnd < rounds:
+        restart = False
         for model in pool.available():
+            if time.time() - pool.t0 > MAX_RUN_SECONDS:
+                raise RuntimeError(f"Step '{label}' timed out after {MAX_RUN_SECONDS}s. Last error: {last}")
+            level = pool.level
             try:
-                agent, task = make(build_llm(model, pool.api_key, profile))
+                agent, task = make(build_llm(model, pool.api_key, profile, level))
                 Crew(agents=[agent], tasks=[task], process=Process.sequential,
                      verbose=False, memory=False).kickoff()
                 return str(task.output.raw), model
             except Exception as e:  # noqa: BLE001
                 kind, cool = classify(e)
+                print(f"[writify] step={label} model={model} level={level} kind={kind}: {str(e)[:400]}", flush=True)
                 if kind == "fatal":
                     raise
-                pool.penalise(model, cool)
                 last = e
+                if kind == "param" and pool.degrade(level):
+                    restart = True      # an optional parameter was rejected -> retry with safer settings
+                    break
+                if kind == "other" and rnd >= 1:
+                    raise               # not a busy/limit problem: show the real error instead of looping
+                pool.penalise(model, cool)
                 emit("fallback", label, f"{model.split('/')[-1]} is {kind}. Trying the next model.")
-        time.sleep(min(45, 6 * 2 ** rnd) + random.random() * 3)
+        if restart:
+            continue
+        rnd += 1
+        if rnd < rounds:
+            time.sleep(min(45, 6 * 2 ** (rnd - 1)) + random.random() * 3)
     raise RuntimeError(f"All Gemini models failed for step '{label}'. Last error: {last}")
 
 
