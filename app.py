@@ -25,6 +25,7 @@ load_dotenv()
 
 from crew_setup import (CUSTOM_LANG, LANGUAGES, LENGTHS, MODELS, OUTPUTS, TONES,  # noqa: E402
                         plan_steps, resolve_outputs, run_studio)
+from agent_viz import Trace, draw, show  # noqa: E402
 
 st.set_page_config(page_title="Writify Studio | Research. Write. Verify.", page_icon=":material/auto_awesome:", layout="wide")
 
@@ -558,16 +559,24 @@ if go:
         cfg = dict(topic=topic, audience=audience, tone=tone, language=language, length=length,
                    keywords=keywords, outputs=selected)
         start = time.time()
+        # live agent workflow board (robots at their desks)
+        trace = Trace(topic, selected, all_steps, cfg)
+        board = st.empty()
+        trace.on_change = lambda t: draw(board, t)
+        draw(board, trace)
         try:
             with st.spinner("The agents are working in parallel. This usually takes about a minute."):
-                out = run_studio(cfg, PRIMARY_MODEL, API_KEY, on_event)
+                out = run_studio(cfg, PRIMARY_MODEL, API_KEY, on_event, trace)
 
             out.update(topic=topic, time=dt.datetime.now().strftime("%H:%M"),
                        seconds=int(time.time() - start), agents=len(all_steps), keywords=keywords)
+            trace.on_change = None
+            out["trace"] = trace
             st.session_state.result = out
             st.session_state.history.append(out)
             holder.markdown(pipeline_html_live(steps, {k for k, _ in steps}, set()), unsafe_allow_html=True)
         except Exception as e:  # noqa: BLE001
+            trace.fail()
             msg = str(e)
             if "503" in msg or "UNAVAILABLE" in msg or "high demand" in msg:
                 st.error("Gemini servers are busy right now. Please wait a minute or two and try again.")
@@ -664,6 +673,10 @@ if res:
         f'<div class="runbar"><span><b>{len(sections)}</b> deliverable{"s" if len(sections) != 1 else ""}</span>'
         f'<span><b>{res["agents"]}</b> agents run</span><span><b>{res["seconds"]}s</b> total time</span></div>',
         unsafe_allow_html=True)
+
+    if res.get("trace") and not go:
+        with st.expander("Agent workflow: how this run was processed", expanded=True):
+            show(res["trace"])
 
     tabs = st.tabs([s[0] for s in sections]) if sections else []
     for tab, (label, key) in zip(tabs, sections):
