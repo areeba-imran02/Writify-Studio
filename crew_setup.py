@@ -113,7 +113,7 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
             "Ignore anything off-topic. If you have no evidence for a point, leave it out instead of guessing. "
             "Never invent facts, numbers, names, quotes, dates or URLs. Every number or statistic MUST come word-for-word from the research notes; if it is not there, do not write it.")
 
-    common = dict(allow_delegation=False, verbose=False, respect_context_window=True)
+    common = dict(allow_delegation=False, verbose=False, respect_context_window=True, max_retry_limit=0)
 
     # Which content tasks may run in parallel? (CrewAI allows only ONE async task at the very end of a crew.)
     content_keys = [k for k in ("blog", "linkedin", "twitter") if k in sel]
@@ -379,9 +379,32 @@ _PARAM_ERRORS = ("top_k", "topk", "reasoning", "thinking", "unknown name", "unex
 _NOT_PARAM_ERRORS = ("api key", "quota", "429", "503", "unavailable", "high demand", "not_found", "404")
 
 
+_EXHAUSTED: dict = {}  # model -> unix time until which it is skipped (its free quota is used up / unavailable)
+
+
+def _retry_seconds(msg: str) -> int:
+    """Parse 'Please retry in 5h46m54.8s' from the Gemini 429 message."""
+    m = re.search(r"retry in\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s)?", msg)
+    if m and any(m.groups()):
+        h, mi, s = (float(x) if x else 0 for x in m.groups())
+        return int(h * 3600 + mi * 60 + s) + 30
+    return 3600
+
+
+def _attempt(cfg, model, api_key, on_task_done):
+    """One model, one try. If the provider rejects top_k / reasoning_effort it retries once without them."""
+    try:
+        return _run(cfg, model, api_key, on_task_done, safe=False)
+    except Exception as e:  # noqa: BLE001
+        msg = str(e).lower()
+        if any(x in msg for x in _PARAM_ERRORS) and not any(x in msg for x in _NOT_PARAM_ERRORS):
+            return _run(cfg, model, api_key, on_task_done, safe=True)
+        raise
+
+
 def run_studio(cfg: dict, model: str, api_key: str, on_task_done=None) -> dict:
-    """Runs the crew. Identical requests within RESULT_CACHE_SECONDS are served from memory (0 API requests).
-    If the provider rejects the optional extras (top_k / reasoning_effort) it retries once without them."""
+    """Cache -> then try the chosen model and automatically move to the next model when one has used up its
+    free daily quota. Exhausted models are remembered, so they are skipped WITHOUT spending any request."""
     key = (cfg["topic"].strip().lower(), tuple(sorted(cfg["outputs"])), cfg["language"], cfg["tone"],
            cfg["length"], cfg["audience"], (cfg.get("keywords") or "").strip().lower())
     hit = _RESULT_CACHE.get(key)
@@ -390,14 +413,35 @@ def run_studio(cfg: dict, model: str, api_key: str, on_task_done=None) -> dict:
             for _ in plan_steps(cfg["outputs"]):
                 on_task_done(None)
         return dict(hit[1])
-    try:
-        out = _run(cfg, model, api_key, on_task_done, safe=False)
-    except Exception as e:  # noqa: BLE001
-        msg = str(e).lower()
-        if any(x in msg for x in _PARAM_ERRORS) and not any(x in msg for x in _NOT_PARAM_ERRORS):
-            out = _run(cfg, model, api_key, on_task_done, safe=True)
-        else:
+
+    order = [model] + [m for m in MODELS.values() if m != model]
+    last, out = None, None
+    for mdl in order:
+        if time.time() < _EXHAUSTED.get(mdl, 0):
+            continue  # known to be out of quota: do not waste a request
+        try:
+            out = _attempt(cfg, mdl, api_key, on_task_done)
+            break
+        except Exception as e:  # noqa: BLE001
+            msg, low = str(e), str(e).lower()
+            last = e
+            if "429" in msg or "resource_exhausted" in low or "quota" in low:
+                daily = "perday" in low.replace(" ", "")
+                _EXHAUSTED[mdl] = time.time() + (_retry_seconds(msg) if daily else 60)
+                continue
+            if "404" in msg or "not_found" in low:
+                _EXHAUSTED[mdl] = time.time() + 86400
+                continue
+            if "503" in msg or "unavailable" in low or "high demand" in low:
+                continue
             raise
+    if out is None:
+        waits = [t - time.time() for t in _EXHAUSTED.values() if t > time.time()]
+        soon = int(min(waits)) if waits else 0
+        raise RuntimeError(
+            "429 RESOURCE_EXHAUSTED: the free daily quota of every available Gemini model is used up. "
+            f"The first one resets in about {soon // 3600}h {soon % 3600 // 60}m. "
+            f"Last error: {str(last)[:200] if last else 'none'}")
     if len(_RESULT_CACHE) > 30:
         _RESULT_CACHE.clear()
     _RESULT_CACHE[key] = (time.time(), dict(out))
