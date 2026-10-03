@@ -67,9 +67,14 @@ def resolve_outputs(selected) -> set:
 
 
 def plan_steps(selected) -> list:
-    """Ordered (key, agent name) steps that will run. Research always runs."""
+    """Ordered (key, agent name) steps that will run. Only runs what is explicitly selected."""
     s = resolve_outputs(selected)
-    steps = [("research", "Researcher")]
+    steps = []
+    
+    # Researcher sirf tab add hoga jab user ne 'research' select kiya ho
+    if "research" in s:
+        steps.append(("research", "Researcher"))
+        
     for key, name in [("blog", "Blog Writer"), ("linkedin", "LinkedIn Writer"), ("twitter", "Twitter/X Writer"),
                       ("seo", "SEO Editor"), ("factcheck", "Fact-Checker")]:
         if key in s:
@@ -125,40 +130,47 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
     agents, tasks = [], []
     lean = LEAN_MODE and bool(sel & {"blog", "linkedin", "twitter", "seo"})
     studio_t = None
+    research_t = None
 
-    researcher = Agent(
-        role="Senior Research Analyst",
-        goal=f"Collect accurate, current and well-sourced facts about '{topic}' only.",
-        backstory="You are a meticulous analyst. You only report what you can support with a source, "
-                  "and you clearly mark anything uncertain. You never invent statistics or URLs.",
-        llm=llm_research, max_iter=3, **common)
-    research_t = Task(
-        description=(
-            f"Research the topic: '{topic}'.\nTarget audience: {audience}.\nFocus keywords: {keywords}.\n"
-            "Below are the REAL search results. They are the ONLY evidence you may use. Ignore any result that is not "
-            "clearly about this topic. Do not search and do not use outside knowledge.\n"
-            f"=== SEARCH RESULTS ===\n{evidence_text}\n=== END OF SEARCH RESULTS ===\n"
-            "Write a CONCISE formal research report (max ~800 words) using the structure in the expected output. "
-            "Cite sources inline with numbered brackets like [1], [2] and list them in References. "
-            "Number citations exactly like the [n] numbers above and only cite those URLs.\n"
-            f"{lang_rule}{lock}"),
-        expected_output=(
-            "A concise formal research report in markdown with EXACTLY these sections, in this order:\n"
-            "# <Report title>\n"
-            "**Prepared for:** the target audience | **Date:** today's date | **Focus keywords:** ...\n"
-            "## Abstract (2-3 sentences)\n"
-            "## 1. Introduction and Background\n"
-            "## 2. Methodology (search approach and types of sources, 2-3 sentences)\n"
-            "## 3. Key Findings (facts and statistics, each with an inline citation [n])\n"
-            "## 4. Current Trends and Analysis\n"
-            "## 5. Limitations (gaps, uncertain or unverified data)\n"
-            "## 6. Conclusion and Recommendations\n"
-            "## References (numbered list: Title - Publisher/Domain - URL)"),
-        agent=researcher)
-    agents.append(researcher)
-    tasks.append(research_t)
+    # Researcher sirf tabhi add hoga jab user ne select kiya ho
+    if "research" in sel:
+        researcher = Agent(
+            role="Senior Research Analyst",
+            goal=f"Collect accurate, current and well-sourced facts about '{topic}' only.",
+            backstory="You are a meticulous analyst. You only report what you can support with a source, "
+                      "and you clearly mark anything uncertain. You never invent statistics or URLs.",
+            llm=llm_research, max_iter=3, **common)
+        research_t = Task(
+            description=(
+                f"Research the topic: '{topic}'.\nTarget audience: {audience}.\nFocus keywords: {keywords}.\n"
+                "Below are the REAL search results. They are the ONLY evidence you may use. Ignore any result that is not "
+                "clearly about this topic. Do not search and do not use outside knowledge.\n"
+                f"=== SEARCH RESULTS ===\n{evidence_text}\n=== END OF SEARCH RESULTS ===\n"
+                "Write a CONCISE formal research report (max ~800 words) using the structure in the expected output. "
+                "Cite sources inline with numbered brackets like [1], [2] and list them in References. "
+                "Number citations exactly like the [n] numbers above and only cite those URLs.\n"
+                f"{lang_rule}{lock}"),
+            expected_output=(
+                "A concise formal research report in markdown with EXACTLY these sections, in this order:\n"
+                "# <Report title>\n"
+                "**Prepared for:** the target audience | **Date:** today's date | **Focus keywords:** ...\n"
+                "## Abstract (2-3 sentences)\n"
+                "## 1. Introduction and Background\n"
+                "## 2. Methodology (search approach and types of sources, 2-3 sentences)\n"
+                "## 3. Key Findings (facts and statistics, each with an inline citation [n])\n"
+                "## 4. Current Trends and Analysis\n"
+                "## 5. Limitations (gaps, uncertain or unverified data)\n"
+                "## 6. Conclusion and Recommendations\n"
+                "## References (numbered list: Title - Publisher/Domain - URL)"),
+            agent=researcher)
+        agents.append(researcher)
+        tasks.append(research_t)
 
     blog_t = li_t = tw_t = seo_t = check_t = None
+    
+    # Context list for writers: agar research task exist karta hai toh use karein
+    writer_context = [research_t] if research_t else []
+
     # ---- LEAN MODE: all writing deliverables in ONE request ----
     if lean:
         want = [k for k in ("blog", "linkedin", "twitter", "seo") if k in sel]
@@ -184,111 +196,99 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
                         "image-alt suggestions.")
         studio = Agent(
             role="Content Studio Writer",
-            goal="Write every requested deliverable accurately from the research notes only.",
-            backstory="You are an expert multi-format writer (blog, LinkedIn, Twitter/X, SEO). You never add facts "
-                      "that are not in the research notes.",
+            goal="Write every requested deliverable accurately from the available notes.",
+            backstory="You are an expert multi-format writer (blog, LinkedIn, Twitter/X, SEO).",
             llm=llm_studio, max_iter=3, **common)
         studio_t = Task(
             description=(
-                f"Using ONLY the research notes, write these deliverables about '{topic}'. Tone: {tone}. "
+                f"Using ONLY the available research data about '{topic}'. Tone: {tone}. "
                 "Output each one under its marker line, exactly as shown, in this order, with no extra text:\n\n"
                 + "\n\n".join(spec) + f"\n\n{lang_rule}{lock}"),
             expected_output="The requested sections, each starting with its ===== marker line.",
-            agent=studio, context=[research_t])
+            agent=studio, context=writer_context)
         agents.append(studio)
         tasks.append(studio_t)
-
 
     if "blog" in sel and not lean:
         blogger = Agent(
             role="Expert Blog Writer",
-            goal="Write an engaging, well-structured, original blog post based strictly on the research notes.",
-            backstory="You are a veteran content writer who turns research into clear, useful and "
-                      "human-sounding articles. You never add facts that are not in the research.",
+            goal="Write an engaging, well-structured, original blog post.",
+            backstory="You are a veteran content writer who turns research into clear, useful articles.",
             llm=llm_blog, max_iter=3, **common)
         blog_t = Task(
             description=(
                 f"Write a blog post about '{topic}' for {audience}. Tone: {tone}. "
-                f"Target length: about {words} words.\nUse ONLY facts from the research notes. "
+                f"Target length: about {words} words.\n"
                 f"Naturally include these keywords: {keywords}.\n"
                 f"Structure: strong title, hook intro, H2/H3 sections, short paragraphs, conclusion with a CTA.\n"
                 f"{lang_rule}{lock}"),
             expected_output="A complete blog post in markdown with title, headings and conclusion.",
-            agent=blogger, context=[research_t], async_execution="blog" in async_keys)
+            agent=blogger, context=writer_context, async_execution="blog" in async_keys)
         agents.append(blogger)
         tasks.append(blog_t)
 
-    # LinkedIn / Twitter only need the research, so they can run in parallel with the blog
     if "linkedin" in sel and not lean:
         a = Agent(
             role="LinkedIn Content Strategist",
-            goal="Create a high-performing LinkedIn post that matches the facts.",
-            backstory="You write scroll-stopping LinkedIn posts: strong hook, short paragraphs, real insight, "
-                      "a clear call-to-action. You avoid cliches and fake claims.",
+            goal="Create a high-performing LinkedIn post.",
+            backstory="You write scroll-stopping LinkedIn posts: strong hook, short paragraphs, real insight.",
             llm=llm_social, max_iter=3, **common)
         li_t = Task(
             description=(
                 f"Write ONE LinkedIn post (150-250 words) about '{topic}'. Tone: {tone}. Audience: {audience}. "
                 "Start with a strong hook, use short lines, add 3-5 relevant hashtags and a call-to-action. "
-                f"Use only facts from the research notes. {lang_rule}{lock}"),
+                f"{lang_rule}{lock}"),
             expected_output="A ready-to-publish LinkedIn post (plain text with line breaks and hashtags).",
-            agent=a, context=[research_t], async_execution="linkedin" in async_keys)
+            agent=a, context=writer_context, async_execution="linkedin" in async_keys)
         agents.append(a)
         tasks.append(li_t)
 
     if "twitter" in sel and not lean:
         a = Agent(
             role="Twitter/X Thread Writer",
-            goal="Create a punchy Twitter/X thread that matches the facts.",
-            backstory="You write threads people actually finish: a sharp hook, one idea per tweet, "
-                      "each under 280 characters, and a strong closing tweet.",
+            goal="Create a punchy Twitter/X thread.",
+            backstory="You write threads people actually finish: a sharp hook, one idea per tweet.",
             llm=llm_social, max_iter=3, **common)
         tw_t = Task(
             description=(
                 f"Write a Twitter/X thread of 6-8 tweets about '{topic}'. Tone: {tone}. "
                 "Number each tweet like 1/, 2/ ... Every tweet MUST be under 280 characters. "
                 "First tweet = strong hook, last tweet = takeaway + CTA, max 2 hashtags overall. "
-                f"Use only facts from the research notes. {lang_rule}{lock}"),
+                f"{lang_rule}{lock}"),
             expected_output="A numbered Twitter/X thread, one tweet per paragraph.",
-            agent=a, context=[research_t], async_execution="twitter" in async_keys)
+            agent=a, context=writer_context, async_execution="twitter" in async_keys)
         agents.append(a)
         tasks.append(tw_t)
 
     if "seo" in sel and not lean:
         a = Agent(
             role="SEO Editor",
-            goal="Polish the blog for readability and search ranking without changing the facts.",
-            backstory="You are a technical SEO editor. You improve headings, keyword placement, readability and "
-                      "metadata while keeping the writer's voice and the facts intact.",
+            goal="Polish the blog for readability and search ranking.",
+            backstory="You are a technical SEO editor improving metadata and structure.",
             llm=llm_seo, max_iter=3, **common)
         seo_t = Task(
             description=(
                 f"Edit the blog post for SEO and readability. Keywords: {keywords}. Improve the title, headings, "
-                "keyword placement (no stuffing), intro and readability. Do NOT add new facts.\n"
+                "keyword placement, intro and readability.\n"
                 f"Output format (strict): first the FINAL polished blog in markdown, then a line containing exactly "
-                f"{SEO_DELIMITER} and after it the SEO metadata: SEO title (<=60 chars), meta description "
-                "(<=155 chars), URL slug, primary keyword, 5 secondary keywords, and a short list of "
-                f"internal-link and image-alt suggestions. {lang_rule}{lock}"),
+                f"{SEO_DELIMITER} and after it the SEO metadata. {lang_rule}{lock}"),
             expected_output=f"Final blog markdown, then {SEO_DELIMITER}, then SEO metadata.",
-            agent=a, context=[blog_t])
+            agent=a, context=[blog_t] if blog_t else writer_context)
         agents.append(a)
         tasks.append(seo_t)
 
     if "factcheck" in sel:
         a = Agent(
             role="Fact-Checker",
-            goal="Honestly verify every important claim in the content against the research and the web.",
-            backstory="You are a skeptical fact-checker. You flag unsupported, outdated or exaggerated claims "
-                      "and never rubber-stamp content. If something is wrong you say so plainly.",
+            goal="Honestly verify every important claim in the content.",
+            backstory="You are a skeptical fact-checker flagging unsupported claims.",
             llm=llm_check, max_iter=3, **common)
-        ctx = [research_t] + [t for t in (studio_t, seo_t or blog_t, li_t, tw_t) if t is not None]
+        ctx = writer_context + [t for t in (studio_t, seo_t or blog_t, li_t, tw_t) if t is not None]
         check_t = Task(
             description=(
-                "Fact-check the generated content against the research notes. List the 5-8 most important "
+                "Fact-check the generated content. List the 5-8 most important "
                 "factual claims. For each give: the claim, a verdict (Verified / Unverified / Incorrect) and "
-                "the evidence or source. Judge only against the research notes. Be honest - "
-                "do not approve claims you cannot support. Also flag any sentence that drifts away from the topic "
-                f"'{topic}'.\nEnd with an overall reliability score out of 10 "
+                "the evidence or source. End with an overall reliability score out of 10 "
                 f"and a list of exact fixes the author should make. {lang_rule}"),
             expected_output="A markdown fact-check report: claims table, overall score /10, required fixes.",
             agent=a, context=ctx)
@@ -296,7 +296,7 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
         tasks.append(check_t)
 
     cb = on_task_done
-    if lean and on_task_done:  # one finished request covers several steps in the progress bar
+    if lean and on_task_done:  
         covers = [1, len([k for k in ("blog", "linkedin", "twitter", "seo") if k in sel])]
         if "factcheck" in sel:
             covers.append(1)
@@ -323,16 +323,21 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
     def urls(t):
         return guard.clean_urls(t, allowed, notes)
 
-    research_raw = urls(research_t.output.raw)
-    research_raw = guard.clean_numbers(research_raw, guard.support_numbers(evidence, extra), notes, True, "Research")
-    support = guard.support_numbers(research_raw, evidence, extra)
+    if research_t and research_t.output:
+        research_raw = urls(research_t.output.raw)
+        research_raw = guard.clean_numbers(research_raw, guard.support_numbers(evidence, extra), notes, True, "Research")
+        support = guard.support_numbers(research_raw, evidence, extra)
+    else:
+        research_raw = ""
+        support = guard.support_numbers(evidence, extra)
 
     def writer(task, label, drop=True):
-        return guard.clean_numbers(urls(task.output.raw), support, notes, drop, label) if task else ""
+        return guard.clean_numbers(urls(task.output.raw), support, notes, drop, label) if task and task.output else ""
 
     li_raw = tw_raw = blog_raw = seo_meta = ""
-    check_raw = urls(check_t.output.raw) if check_t else ""
-    if studio_t:
+    check_raw = urls(check_t.output.raw) if check_t and check_t.output else ""
+    
+    if studio_t and studio_t.output:
         parts = _split_parts(studio_t.output.raw)
         for key, label in (("blog", "Blog"), ("linkedin", "LinkedIn"), ("twitter", "Twitter/X"), ("seo", "SEO")):
             if key in sel and not parts.get(key.upper()):
@@ -344,7 +349,7 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
     else:
         li_raw = writer(li_t, "LinkedIn")
         tw_raw = writer(tw_t, "Twitter/X", drop=False)
-        if seo_t:
+        if seo_t and seo_t.output:
             raw = seo_t.output.raw
             if SEO_DELIMITER in raw:
                 b, seo_meta = raw.split(SEO_DELIMITER, 1)
@@ -359,7 +364,7 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
     show = set(cfg["outputs"])  # only what the user actually selected is delivered
     out = {k: "" for k in ("research", "blog", "linkedin", "twitter", "seo", "factcheck")}
     out["sources"] = sources if "research" in show else []
-    if "research" in show:
+    if "research" in show and research_t:
         out["research"] = research_raw.strip() + note_md
     if li_raw and "linkedin" in show:
         out["linkedin"] = li_raw.strip()
@@ -379,11 +384,10 @@ _PARAM_ERRORS = ("top_k", "topk", "reasoning", "thinking", "unknown name", "unex
 _NOT_PARAM_ERRORS = ("api key", "quota", "429", "503", "unavailable", "high demand", "not_found", "404")
 
 
-_EXHAUSTED: dict = {}  # model -> unix time until which it is skipped (its free quota is used up / unavailable)
+_EXHAUSTED: dict = {}  # model -> unix time until which it is skipped
 
 
 def _retry_seconds(msg: str) -> int:
-    """Parse 'Please retry in 5h46m54.8s' from the Gemini 429 message."""
     m = re.search(r"retry in\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s)?", msg)
     if m and any(m.groups()):
         h, mi, s = (float(x) if x else 0 for x in m.groups())
@@ -392,10 +396,9 @@ def _retry_seconds(msg: str) -> int:
 
 
 def _attempt(cfg, model, api_key, on_task_done):
-    """One model, one try. If the provider rejects top_k / reasoning_effort it retries once without them."""
     try:
         return _run(cfg, model, api_key, on_task_done, safe=False)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  
         msg = str(e).lower()
         if any(x in msg for x in _PARAM_ERRORS) and not any(x in msg for x in _NOT_PARAM_ERRORS):
             return _run(cfg, model, api_key, on_task_done, safe=True)
@@ -403,8 +406,6 @@ def _attempt(cfg, model, api_key, on_task_done):
 
 
 def run_studio(cfg: dict, model: str, api_key: str, on_task_done=None) -> dict:
-    """Cache -> then try the chosen model and automatically move to the next model when one has used up its
-    free daily quota. Exhausted models are remembered, so they are skipped WITHOUT spending any request."""
     key = (cfg["topic"].strip().lower(), tuple(sorted(cfg["outputs"])), cfg["language"], cfg["tone"],
            cfg["length"], cfg["audience"], (cfg.get("keywords") or "").strip().lower())
     hit = _RESULT_CACHE.get(key)
@@ -418,11 +419,11 @@ def run_studio(cfg: dict, model: str, api_key: str, on_task_done=None) -> dict:
     last, out = None, None
     for mdl in order:
         if time.time() < _EXHAUSTED.get(mdl, 0):
-            continue  # known to be out of quota: do not waste a request
+            continue  
         try:
             out = _attempt(cfg, mdl, api_key, on_task_done)
             break
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  
             msg, low = str(e), str(e).lower()
             last = e
             if "429" in msg or "resource_exhausted" in low or "quota" in low:
