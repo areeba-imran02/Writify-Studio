@@ -111,16 +111,13 @@ CREW_EDITS = [
 APP_EDITS = [
     ("                        plan_steps, resolve_outputs, run_studio)\n",
      "                        plan_steps, resolve_outputs, run_studio)\n"
-     "from agent_viz import Trace, render_board, VIZ_CSS  # noqa: E402\n"),
-    ('st.markdown(f"<style>{BASE_CSS}{theme_css()}</style>", unsafe_allow_html=True)\n',
-     'st.markdown(f"<style>{BASE_CSS}{theme_css()}</style>", unsafe_allow_html=True)\n'
-     'st.markdown(f"<style>{VIZ_CSS}</style>", unsafe_allow_html=True)\n'),
+     "from agent_viz import Trace, draw, show  # noqa: E402\n"),
     ("        start = time.time()\n        try:\n",
      "        start = time.time()\n"
      "        trace = Trace(topic, selected, all_steps, cfg)\n"
      "        board = st.empty()\n"
-     "        trace.on_change = lambda t: board.markdown(render_board(t), unsafe_allow_html=True)\n"
-     "        board.markdown(render_board(trace), unsafe_allow_html=True)\n"
+     "        trace.on_change = lambda t: draw(board, t)\n"
+     "        draw(board, trace)\n"
      "        try:\n"),
     ("out = run_studio(cfg, PRIMARY_MODEL, API_KEY, on_event)",
      "out = run_studio(cfg, PRIMARY_MODEL, API_KEY, on_event, trace)"),
@@ -130,20 +127,38 @@ APP_EDITS = [
      "        except Exception as e:  # noqa: BLE001\n            trace.fail()\n            msg = str(e)\n"),
     ("    tabs = st.tabs([s[0] for s in sections]) if sections else []\n",
      '    if res.get("trace") and not go:\n'
-     '        with st.expander("Agent workflow: how this run was processed"):\n'
-     '            st.markdown(render_board(res["trace"]), unsafe_allow_html=True)\n\n'
+     '        with st.expander("Agent workflow: how this run was processed", expanded=True):\n'
+     '            show(res["trace"])\n\n'
      "    tabs = st.tabs([s[0] for s in sections]) if sections else []\n"),
 ]
 
 
-def patch(path, edits, marker):
+# Upgrade for files that already got the first (st.markdown) version of the patch.
+APP_UPGRADE = [
+    ("from agent_viz import Trace, render_board, VIZ_CSS  # noqa: E402\n",
+     "from agent_viz import Trace, draw, show  # noqa: E402\n"),
+    ('st.markdown(f"<style>{VIZ_CSS}</style>", unsafe_allow_html=True)\n', ""),
+    ("        trace.on_change = lambda t: board.markdown(render_board(t), unsafe_allow_html=True)\n"
+     "        board.markdown(render_board(trace), unsafe_allow_html=True)\n",
+     "        trace.on_change = lambda t: draw(board, t)\n        draw(board, trace)\n"),
+    ('        with st.expander("Agent workflow: how this run was processed"):\n'
+     '            st.markdown(render_board(res["trace"]), unsafe_allow_html=True)\n',
+     '        with st.expander("Agent workflow: how this run was processed", expanded=True):\n'
+     '            show(res["trace"])\n'),
+]
+
+
+def patch(path, edits, marker, upgrade=None):
     with open(path, "r", encoding="utf-8", newline="") as f:
         raw = f.read()
     crlf = "\r\n" in raw
     text = raw.replace("\r\n", "\n")
     if marker in text:
-        print(f"{path}: already patched, skipped")
-        return True
+        if upgrade and "render_board" in text:
+            edits = upgrade
+        else:
+            print(f"{path}: already patched, skipped")
+            return True
     for i, (old, new) in enumerate(edits, 1):
         n = text.count(old)
         if n != 1:
@@ -163,5 +178,5 @@ if __name__ == "__main__":
     if not os.path.exists("agent_viz.py"):
         sys.exit("agent_viz.py not found here. Put it next to app.py first.")
     ok1 = patch("crew_setup.py", CREW_EDITS, "def _t(trace, name")
-    ok2 = patch("app.py", APP_EDITS, "from agent_viz import")
+    ok2 = patch("app.py", APP_EDITS, "from agent_viz import", APP_UPGRADE)
     print("Done." if ok1 and ok2 else "Some files were not patched; see messages above.")
