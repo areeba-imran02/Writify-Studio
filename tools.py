@@ -1,8 +1,11 @@
 """DuckDuckGo search tools (free, no API key). Every result is also logged so the UI can show real sources.
 
-v2: results that share no word with the topic are dropped, so off-topic pages never reach the agents.
+Speed notes:
+- results are cached in memory for 1 hour (same query = instant)
+- fewer results (5) and trimmed summaries = fewer input tokens for the LLM = faster answers
+- short network timeout + quick retry so one slow search cannot stall the whole run
 """
-import re
+
 import time
 
 from crewai.tools import tool
@@ -12,15 +15,23 @@ try:  # new package name
 except ImportError:  # old package name fallback
     from duckduckgo_search import DDGS
 
+MAX_RESULTS = 5          # was 6
+SUMMARY_CHARS = 280      # trim long snippets (less text for the LLM to read)
+SEARCH_TIMEOUT = 10      # seconds
+CACHE_TTL = 3600         # seconds
+_CACHE: dict = {}        # (kind, query) -> (timestamp, results)
+
 
 def _format(results) -> str:
     if not results:
         return "No results found. Try a different / simpler query."
     lines = []
     for i, r in enumerate(results, 1):
-        title = r.get("title", "")
+        title = (r.get("title") or "").strip()
         url = r.get("href") or r.get("url", "")
-        body = r.get("body", "")
+        body = (r.get("body") or "").strip()
+        if len(body) > SUMMARY_CHARS:
+            body = body[:SUMMARY_CHARS].rsplit(" ", 1)[0] + "..."
         date = r.get("date", "")
         lines.append(f"[{i}] {title}\nURL: {url}\n{('Date: ' + date + chr(10)) if date else ''}Summary: {body}")
     return "\n\n".join(lines)
@@ -33,24 +44,26 @@ def _with_retry(fn, attempts: int = 3):
             return fn()
         except Exception as e:  # rate limit / network
             last = e
-            time.sleep(1.5 * (i + 1))
+            time.sleep(1.0 * (i + 1))
     return f"Search failed: {last}"
 
 
-def make_search_tools(sources: list, topic: str = ""):
-    """Create the search tools for ONE run. Every result URL is appended to `sources` (deduplicated).
+def _cached(kind: str, query: str, fn):
+    key = (kind, query.strip().lower())
+    hit = _CACHE.get(key)
+    if hit and time.time() - hit[0] < CACHE_TTL:
+        return hit[1]
+    res = _with_retry(fn)
+    if not isinstance(res, str):  # only cache real results, not error strings
+        if len(_CACHE) > 200:
+            _CACHE.clear()
+        _CACHE[key] = (time.time(), res)
+    return res
 
-    `topic` is used to drop results that are not about it (keeps the old behaviour if nothing matches).
-    """
+
+def make_search_tools(sources: list):
+    """Create the search tools for ONE run. Every result URL is appended to `sources` (deduplicated)."""
     seen = set()
-    terms = {w for w in re.findall(r"\w+", topic.lower()) if len(w) > 3}
-
-    def _on_topic(results):
-        if not terms or not results:
-            return results
-        kept = [r for r in results
-                if any(t in f"{r.get('title', '')} {r.get('body', '')}".lower() for t in terms)]
-        return kept or results
 
     def _log(query, results):
         for r in results or []:
@@ -61,25 +74,23 @@ def make_search_tools(sources: list, topic: str = ""):
 
     @tool("DuckDuckGo Web Search")
     def web_search(query: str) -> str:
-        """Search the web with DuckDuckGo. Input: a short search query string that contains the main topic words.
+        """Search the web with DuckDuckGo. Input: a short search query string that contains the main topic.
         Returns top results with title, URL and summary. Use it to find facts,
         statistics, trends and sources."""
-        res = _with_retry(lambda: list(DDGS().text(query, max_results=8)))
+        res = _cached("web", query, lambda: list(DDGS(timeout=SEARCH_TIMEOUT).text(query, max_results=MAX_RESULTS)))
         if isinstance(res, str):
             return res
-        res = _on_topic(res)[:6]
         _log(query, res)
         return _format(res)
 
     @tool("DuckDuckGo News Search")
     def news_search(query: str) -> str:
-        """Search latest news with DuckDuckGo. Input: a short search query string that contains the main topic words.
+        """Search latest news with DuckDuckGo. Input: a short search query string that contains the main topic.
         Returns recent news items with date, URL and summary. Use it for current
         events and recent developments."""
-        res = _with_retry(lambda: list(DDGS().news(query, max_results=8)))
+        res = _cached("news", query, lambda: list(DDGS(timeout=SEARCH_TIMEOUT).news(query, max_results=MAX_RESULTS)))
         if isinstance(res, str):
             return res
-        res = _on_topic(res)[:6]
         _log(query, res)
         return _format(res)
 
