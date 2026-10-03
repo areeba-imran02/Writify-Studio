@@ -9,6 +9,17 @@ import time
 import guard
 from tools import prefetch_evidence
 
+
+def _t(trace, name, *a, **k):
+    """Safe hook: the visual board can never break a run."""
+    if trace is None:
+        return
+    try:
+        getattr(trace, name)(*a, **k)
+    except Exception:
+        pass
+
+
 SEO_DELIMITER = "=====SEO_META====="
 
 MODELS = {
@@ -91,7 +102,8 @@ def _split_parts(raw: str) -> dict:
 _RESULT_CACHE: dict = {}
 
 
-def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = False) -> dict:
+def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = False, trace=None) -> dict:
+    _t(trace, "reset")
     sel = resolve_outputs(cfg["outputs"])
     topic, audience, tone, language = cfg["topic"], cfg["audience"], cfg["tone"], cfg["language"]
     words = LENGTHS[cfg["length"]]
@@ -108,7 +120,9 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
 
     # Searches run in plain Python (free, no Gemini quota). Stop BEFORE any Gemini call if nothing real was found.
     sources: list = []
+    _t(trace, "phase", "retrieve")
     evidence_text = prefetch_evidence(topic, cfg.get("keywords", ""), sources)
+    _t(trace, "rag", sources)
     if len(sources) < 2:
         raise RuntimeError("Not enough real sources were found for this topic, so generation was stopped to avoid "
                            "made-up content. Try a more specific topic or run again in a minute.")
@@ -129,6 +143,7 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
 
     agents, tasks = [], []
     lean = LEAN_MODE and bool(sel & {"blog", "linkedin", "twitter", "seo"})
+    _t(trace, "plan", lean)
     studio_t = None
     research_t = None
 
@@ -308,9 +323,59 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
             for _ in range(n):
                 on_task_done(o)
 
+    task_cb = cb
+    if trace is not None:
+        owner = {id(research_t): ["research"],
+                 id(studio_t): [k for k in ("blog", "linkedin", "twitter", "seo") if k in sel],
+                 id(blog_t): ["blog"], id(li_t): ["linkedin"], id(tw_t): ["twitter"],
+                 id(seo_t): ["seo"], id(check_t): ["factcheck"]}
+        task_keys = [owner.get(id(t), []) for t in tasks]
+        _t(trace, "prompts", {k: t.description for t, ks in zip(tasks, task_keys) for k in ks})
+        state = {"started": set(), "finished": set()}
+
+        def _begin():
+            """Start every task that can run now (up to and including the first non-async one)."""
+            for i in state["started"]:
+                if i not in state["finished"] and not getattr(tasks[i], "async_execution", False):
+                    return
+            for i, t in enumerate(tasks):
+                if i in state["started"] or i in state["finished"]:
+                    continue
+                _t(trace, "start", task_keys[i])
+                state["started"].add(i)
+                if not getattr(t, "async_execution", False):
+                    break
+
+        def _task_cb(o):
+            try:
+                desc = getattr(o, "description", None)
+                i = next((j for j, t in enumerate(tasks) if t.description == desc and j not in state["finished"]), None)
+                if i is None:
+                    i = next((j for j in sorted(state["started"]) if j not in state["finished"]), None)
+                if i is not None:
+                    state["finished"].add(i)
+                    raw = getattr(o, "raw", "") or ""
+                    ks = task_keys[i]
+                    if tasks[i] is studio_t:
+                        parts = _split_parts(raw)
+                        outs = {k: parts.get(k.upper(), "") for k in ks}
+                    else:
+                        outs = {k: raw for k in ks}
+                    _t(trace, "done", ks, outs)
+                    _begin()
+            except Exception:
+                pass
+            if cb:
+                cb(o)
+
+        task_cb = _task_cb
+        _t(trace, "phase", "agents")
+        _begin()
+
     crew = Crew(agents=agents, tasks=tasks, process=Process.sequential, verbose=False,
-                memory=False, max_rpm=MAX_RPM, task_callback=cb)
+                memory=False, max_rpm=MAX_RPM, task_callback=task_cb)
     crew.kickoff()
+    _t(trace, "phase", "guard")
 
     # ------------------------------------------------------------------
     # Code-level hallucination guard (links + numbers checked against real search results)
@@ -376,6 +441,8 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
         out["seo"] = seo_meta.strip()
     if "blog" in show:
         out["blog"] = blog_raw.strip()
+    _t(trace, "guard", notes)
+    _t(trace, "finish", out)
     return out
 
 
@@ -395,17 +462,17 @@ def _retry_seconds(msg: str) -> int:
     return 3600
 
 
-def _attempt(cfg, model, api_key, on_task_done):
+def _attempt(cfg, model, api_key, on_task_done, trace=None):
     try:
-        return _run(cfg, model, api_key, on_task_done, safe=False)
+        return _run(cfg, model, api_key, on_task_done, safe=False, trace=trace)
     except Exception as e:  
         msg = str(e).lower()
         if any(x in msg for x in _PARAM_ERRORS) and not any(x in msg for x in _NOT_PARAM_ERRORS):
-            return _run(cfg, model, api_key, on_task_done, safe=True)
+            return _run(cfg, model, api_key, on_task_done, safe=True, trace=trace)
         raise
 
 
-def run_studio(cfg: dict, model: str, api_key: str, on_task_done=None) -> dict:
+def run_studio(cfg: dict, model: str, api_key: str, on_task_done=None, trace=None) -> dict:
     key = (cfg["topic"].strip().lower(), tuple(sorted(cfg["outputs"])), cfg["language"], cfg["tone"],
            cfg["length"], cfg["audience"], (cfg.get("keywords") or "").strip().lower())
     hit = _RESULT_CACHE.get(key)
@@ -413,6 +480,7 @@ def run_studio(cfg: dict, model: str, api_key: str, on_task_done=None) -> dict:
         if on_task_done:
             for _ in plan_steps(cfg["outputs"]):
                 on_task_done(None)
+        _t(trace, "cached_result", dict(hit[1]))
         return dict(hit[1])
 
     order = [model] + [m for m in MODELS.values() if m != model]
@@ -421,7 +489,7 @@ def run_studio(cfg: dict, model: str, api_key: str, on_task_done=None) -> dict:
         if time.time() < _EXHAUSTED.get(mdl, 0):
             continue  
         try:
-            out = _attempt(cfg, mdl, api_key, on_task_done)
+            out = _attempt(cfg, mdl, api_key, on_task_done, trace)
             break
         except Exception as e:  
             msg, low = str(e), str(e).lower()
