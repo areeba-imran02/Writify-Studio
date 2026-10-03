@@ -9,7 +9,7 @@ import zipfile
 import datetime as dt
 from urllib.parse import quote_plus, urlparse
 
-try:  # Streamlit Cloud ships an old sqlite3; crewai needs a newer one
+try: Streamlit Cloud ships an old sqlite3; crewai needs a newer one
     __import__("pysqlite3")
     sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
 except ImportError:
