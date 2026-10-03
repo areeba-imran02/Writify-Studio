@@ -260,6 +260,7 @@ class WorkflowTracker:
             pass
 
     def _card(self, a, step_no):
+        """One robot-at-a-desk station. Status/text are real runtime state; screen bars are decorative."""
         k = a["key"]
         s = self.state[k]
         st = s["status"]
@@ -281,14 +282,24 @@ class WorkflowTracker:
                 out = "Waiting for upstream agents" if k != "research" else "Waiting to start"
             rows += f'<div class="wf-row"><span>OUTPUT</span><b>{out}</b></div>'
         chips = "".join(f'<span class="wf-chip"><i>{_e(l)}</i>{_e(v)}</span>' for l, v in s["metrics"])
-        act = '<div class="wf-act"><i></i><i></i><i></i></div>' if st == "running" else ""
         step = f'<span class="wf-step">STEP {step_no}</span>' if (st != "skipped" and step_no) else ""
         notehtml = f'<span class="wf-note">{_e(note)}</span>' if note else ""
-        return (f'<div class="wf-card {st}" style="--ac:{a["ac"]};--tint:{a["tint"]};--glow:{a["glow"]}">'
-                f'<div class="wf-ch"><span class="wf-ico">{a["glyph"]}</span>'
+        bubble = ""
+        if st == "running":
+            bubble = f'<div class="dk-bubble"><em>{_e(a["name"]).upper()} &middot; WORKING</em>{_e(s["task"])}&hellip;</div>'
+        elif st == "failed":
+            bubble = f'<div class="dk-bubble bad"><em>FAILED</em>{_e(s["error"])}</div>'
+        bars = "<i></i><i></i><i></i><i></i>"
+        bot = ('<div class="dk-bot"><i class="dk-ant"></i><div class="dk-head"><b></b><b></b></div>'
+               '<div class="dk-body"><u></u></div><s class="dk-arm l"></s><s class="dk-arm r"></s></div>')
+        scene = (f'<div class="dk-scene"><div class="dk-screen">{bars}</div><div class="dk-desk"></div>{bot}'
+                 f'<div class="dk-leg"></div><div class="dk-base"></div>{bubble}</div>')
+        return (f'<div class="wf-card {st} desk" style="--ac:{a["ac"]};--tint:{a["tint"]};--glow:{a["glow"]}">'
+                f'<div class="dk-label">{_e(a["name"])}</div>{scene}'
+                f'<div class="dk-info"><div class="wf-ch"><span class="wf-ico">{a["glyph"]}</span>'
                 f'<div class="wf-nm"><b>{_e(a["name"])}</b><em>{_e(a["role"])}</em></div>'
                 f'<span class="wf-badge {st}">{sym} {txt}</span></div>'
-                f'{step}{notehtml}{rows}{act}<div class="wf-chips">{chips}</div></div>')
+                f'{step}{notehtml}{rows}<div class="wf-chips">{chips}</div></div></div>')
 
     def _conn(self, chips, dests):
         """Labelled connector. chips: [(label, src_key)], dests: agent keys receiving the data."""
@@ -389,7 +400,10 @@ class WorkflowTracker:
             f'{self._conn(into_fc or [("Not used in this run", None)], ["factcheck"])}'
             f'<div class="wf-solo">{self._card(BY_KEY["factcheck"], order.get("factcheck"))}</div>'
             f'{self._conn(into_final, ["factcheck"] if "factcheck" in self.planned else [self._current() or self.planned[-1]])}'
-            f'{fin}</div>'
+            f'{fin}'
+            '<div class="wf-legend"><span><i class="lg pending"></i>PENDING</span><span><i class="lg running"></i>RUNNING</span>'
+            '<span><i class="lg completed"></i>COMPLETED</span><span><i class="lg skipped"></i>SKIPPED</span>'
+            '<span><i class="lg failed"></i>FAILED</span></div></div>'
         )
 
 
@@ -448,4 +462,44 @@ WORKFLOW_CSS = """
 .wf-final.bad{background:#FEE2E2;border:2px solid #FCA5A5}.wf-final.bad b,.wf-final.bad span{color:#7F1D1D !important}
 @media (max-width:640px){.wf{padding:18px 14px}.wf-phases em{display:none}.wf-ph{flex:1 1 45%;text-align:center}}
 @media (prefers-reduced-motion:reduce){.wf-card.running,.wf-dot,.wf-act i,.wf-conn.live .wf-line{animation:none !important}}
+
+/* ===== robot-at-desk stations ===== */
+.wf-grid{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:26px 14px}
+.wf-card.desk{background:none !important;border:none !important;box-shadow:none !important;padding:0 !important;border-radius:0 !important;animation:none !important;display:flex;flex-direction:column;align-items:center;--eye:#94A3B8}
+.wf-card.desk.running{--eye:var(--ac)}.wf-card.desk.completed{--eye:var(--ac)}.wf-card.desk.failed{--eye:#DC2626}.wf-card.desk.skipped{--eye:#CBD5E1}
+.dk-label{font-family:'Space Grotesk','Sora',sans-serif;font-size:.74rem;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--ac) !important;margin:2px 0 6px}
+.dk-scene{position:relative;width:100%;max-width:300px;height:184px}
+.dk-screen{position:absolute;left:50%;transform:translateX(-50%);top:0;width:196px;height:82px;background:#0B1210;border-radius:11px;padding:14px 16px;box-shadow:0 0 0 2px #1B2724,0 8px 18px rgba(15,23,42,.18)}
+.dk-screen i{display:block;height:6px;border-radius:3px;margin:0 0 9px;background:#26322F;transform-origin:left center}
+.dk-screen i:nth-child(1){width:92%}.dk-screen i:nth-child(2){width:76%}.dk-screen i:nth-child(3){width:84%}.dk-screen i:nth-child(4){width:40%}
+.wf-card.desk.running .dk-screen{box-shadow:0 0 0 2px var(--ac),0 0 26px var(--glow);animation:dkscreen 1.6s infinite alternate}
+.wf-card.desk.running .dk-screen i{background:var(--ac);animation:dktype 1.3s infinite ease-in-out}
+.wf-card.desk.running .dk-screen i:nth-child(2){animation-delay:.2s}.wf-card.desk.running .dk-screen i:nth-child(3){animation-delay:.4s}.wf-card.desk.running .dk-screen i:nth-child(4){animation-delay:.6s}
+.wf-card.desk.completed .dk-screen{box-shadow:0 0 0 2px var(--ac),0 0 20px var(--glow)}.wf-card.desk.completed .dk-screen i{background:var(--ac)}
+.wf-card.desk.failed .dk-screen{box-shadow:0 0 0 2px #DC2626,0 0 20px rgba(220,38,38,.35)}.wf-card.desk.failed .dk-screen i{background:#7F1D1D}
+.wf-card.desk.skipped .dk-scene{opacity:.4;filter:grayscale(1)}
+@keyframes dktype{0%{transform:scaleX(.15);opacity:.5}60%{transform:scaleX(1);opacity:1}100%{transform:scaleX(.55);opacity:.8}}
+@keyframes dkscreen{0%{box-shadow:0 0 0 2px var(--ac),0 0 10px var(--glow)}100%{box-shadow:0 0 0 2px var(--ac),0 0 30px var(--glow)}}
+.dk-desk{position:absolute;left:50%;transform:translateX(-50%);top:108px;width:272px;height:46px;border-radius:11px;background:linear-gradient(#3C4543,#242B29);box-shadow:0 8px 16px rgba(15,23,42,.25)}
+.dk-leg{position:absolute;left:50%;transform:translateX(-50%);top:154px;width:150px;height:9px;border-radius:5px;background:#323A38}
+.dk-base{position:absolute;left:50%;transform:translateX(-50%);top:166px;width:54px;height:13px;border-radius:5px;background:#242B29}
+.dk-bot{position:absolute;left:50%;transform:translateX(-50%);top:70px;width:70px;height:96px;z-index:2}
+.dk-ant{position:absolute;left:50%;top:0;width:2px;height:10px;background:#9CA3AF;transform:translateX(-50%)}.dk-ant:after{content:"";position:absolute;left:-3px;top:-5px;width:8px;height:8px;border-radius:50%;background:var(--eye)}
+.dk-head{position:absolute;left:50%;top:10px;transform:translateX(-50%);width:44px;height:34px;border-radius:13px;background:#FFFFFF;border:2px solid #E2E8F0;box-shadow:0 3px 8px rgba(15,23,42,.2);display:flex;justify-content:center;align-items:center;gap:8px}
+.dk-head b{width:9px;height:9px;border-radius:50%;background:var(--eye);box-shadow:0 0 8px var(--eye)}
+.wf-card.desk.running .dk-head b{animation:dkblink 2.4s infinite}.wf-card.desk.skipped .dk-head b{height:3px;border-radius:2px;box-shadow:none}.wf-card.desk.pending .dk-head b{box-shadow:none}
+@keyframes dkblink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}
+.dk-body{position:absolute;left:50%;top:46px;transform:translateX(-50%);width:38px;height:34px;border-radius:12px 12px 10px 10px;background:#FFFFFF;border:2px solid #E2E8F0;box-shadow:0 3px 8px rgba(15,23,42,.2);display:flex;justify-content:center;align-items:center}
+.dk-body u{width:9px;height:9px;border-radius:3px;background:var(--eye);text-decoration:none}
+.dk-arm{position:absolute;top:50px;width:9px;height:22px;border-radius:5px;background:#FFFFFF;border:2px solid #E2E8F0;text-decoration:none}.dk-arm.l{left:4px;transform:rotate(14deg)}.dk-arm.r{right:4px;transform:rotate(-14deg)}
+.wf-card.desk.running .dk-arm.r{animation:dktap .5s infinite alternate}@keyframes dktap{0%{transform:rotate(-14deg)}100%{transform:rotate(-34deg)}}
+.dk-bubble{position:absolute;left:50%;transform:translateX(-50%);top:4px;width:224px;z-index:4;background:#FFFFFF;border:1.5px solid var(--ac);border-radius:11px;padding:8px 12px;font-size:.78rem;font-weight:600;line-height:1.3;color:#1E293B !important;box-shadow:0 8px 20px rgba(15,23,42,.2)}
+.dk-bubble em{display:block;font-style:normal;font-size:.62rem;font-weight:800;letter-spacing:.12em;color:var(--ac) !important;margin-bottom:2px}
+.dk-bubble.bad{border-color:#DC2626}.dk-bubble.bad em{color:#B91C1C !important}
+.dk-info{width:100%;max-width:300px;margin-top:8px;background:#FFFFFF;border:1px solid rgba(15,23,42,.1);border-top:4px solid var(--ac);border-radius:14px;padding:11px 14px;box-shadow:0 6px 16px rgba(15,23,42,.07)}
+.wf-card.desk.skipped .dk-info{opacity:.6}.wf-card.desk.failed .dk-info{background:#FEF2F2;border-top-color:#DC2626}
+.wf-legend{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:18px}
+.wf-legend span{display:inline-flex;align-items:center;gap:7px;font-size:.68rem;font-weight:800;letter-spacing:.1em;padding:5px 12px;border-radius:999px;background:#F1FCF7;border:1px solid #CBEBDF;color:#24534A !important}
+.lg{width:9px;height:9px;border-radius:50%;display:inline-block;background:#94A3B8}.lg.running{background:#F97316}.lg.completed{background:#16A34A}.lg.failed{background:#DC2626}.lg.skipped{background:#CBD5E1}
+@media (prefers-reduced-motion:reduce){.wf-card.desk .dk-screen,.wf-card.desk .dk-screen i,.wf-card.desk .dk-head b,.wf-card.desk .dk-arm{animation:none !important}}
 """
