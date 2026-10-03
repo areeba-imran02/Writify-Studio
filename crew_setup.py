@@ -1,21 +1,4 @@
-"""Agents, tasks and runner for Writify Studio (CrewAI + Gemini).
-
-v2 changes
-  * SPEED      - independent agents run in parallel, research is cached, thinking is kept low,
-                 the heavy formal report is only produced when the user selects it.
-  * RESILIENCE - every step has its own model fallback (4 Gemini models). If one model hits a limit,
-                 only that step moves to the next model; finished steps are never re-run.
-  * ACCURACY   - evidence-first pipeline (Evidence Pack), strict topic lock, today's date injected,
-                 sampling parameters (temperature / top_p / top_k) set per agent type.
-"""
-import datetime as dt
-import os
-import queue
-import random
-import re
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
+"""Agents, tasks and crew for Writify Studio (CrewAI + Gemini)."""
 
 from crewai import Agent, Crew, LLM, Process, Task
 
@@ -23,16 +6,11 @@ from tools import make_search_tools
 
 SEO_DELIMITER = "=====SEO_META====="
 
-# Fallback order. The first model is used first; if it is busy / out of quota the SAME step silently
-# continues on the next one (no message is shown to the user). 4 main models + 2 hidden backups.
 MODELS = {
-    "Gemini 3.5 Flash": "gemini/gemini-3.5-flash",
-    "Gemini 3.8 Flash": "gemini/gemini-3.8-flash",
-    "Gemini 3.5 Flash-Lite": "gemini/gemini-3.5-flash-lite",
-    "Gemini 3.1 Flash-Lite": "gemini/gemini-3.1-flash-lite",
+    "Gemini 3.8 Flash (recommended)": "gemini/gemini-3.8-flash",
+    "Gemini 3.5 Flash-Lite (fast)": "gemini/gemini-3.5-flash-lite",
+    "Gemini 3.1 Flash-Lite (fast)": "gemini/gemini-3.1-flash-lite",
 }
-EXTRA_FALLBACKS = ["gemini/gemini-2.5-flash", "gemini/gemini-2.5-flash-lite"]  # last resort
-
 LENGTHS = {"Short (~500 words)": 500, "Medium (~900 words)": 900, "Long (~1500 words)": 1500}
 CUSTOM_LANG = "Custom language..."
 LANGUAGES = ["English", "Urdu", "Roman Urdu", CUSTOM_LANG]
@@ -46,158 +24,31 @@ OUTPUTS = [  # (key, label)
     ("research", "Research report"),
 ]
 
-# ------------------------------------------------------------------ tuning knobs (env-overridable)
-PARALLEL = int(os.getenv("WRITIFY_PARALLEL", "3"))            # 1 = run agents one by one
-TUNE_SAMPLING = os.getenv("WRITIFY_TUNE_SAMPLING", "1") == "1"  # 0 = use Gemini defaults (see note below)
-SEND_THINKING = os.getenv("WRITIFY_THINKING", "on") != "off"    # "off" = never send reasoning_effort
-REQUEST_TIMEOUT = int(os.getenv("WRITIFY_TIMEOUT", "120"))      # seconds; a hung model triggers fallback
-MAX_RUN_SECONDS = int(os.getenv("WRITIFY_MAX_SECONDS", "420"))  # hard stop so the UI never hangs forever
-CACHE_TTL = 3600                                                # reuse research for the same topic for 1 hour
+# ---------------------------------------------------------------------------
+# Generation settings  (lower values = more focused, fewer hallucinations)
+# ---------------------------------------------------------------------------
+GEN_PRECISE = dict(temperature=0.2, top_p=0.80, top_k=20)  # research + fact-check: stick to evidence
+GEN_WRITER = dict(temperature=0.4, top_p=0.85, top_k=30)   # blog / social / SEO: natural but grounded
 
-# NOTE: Google recommends leaving temperature/top_p/top_k at their defaults for Gemini 3.x models.
-# The values below are deliberately mild. If you ever see repeated/looping text, set WRITIFY_TUNE_SAMPLING=0.
-_FACT = dict(temperature=0.5, top_p=0.9, top_k=40)   # research, report, SEO: stay close to the evidence
-_STRICT = dict(temperature=0.4, top_p=0.9, top_k=40)  # fact-check: most conservative
-_WRITE = dict(temperature=0.7, top_p=0.9, top_k=40)   # writers: some freedom of wording, not of facts
-
-PROFILES = {
-    "research": dict(max_tokens=4096, thinking="low", sampling=_FACT),
-    "report": dict(max_tokens=6144, thinking="low", sampling=_FACT),
-    "blog": dict(max_tokens=6144, thinking="low", sampling=_WRITE),
-    "linkedin": dict(max_tokens=2048, thinking="low", sampling=_WRITE),
-    "twitter": dict(max_tokens=2048, thinking="low", sampling=_WRITE),
-    "seo": dict(max_tokens=6144, thinking="low", sampling=_FACT),
-    "factcheck": dict(max_tokens=4096, thinking="medium", sampling=_STRICT),
-}
+USE_TOP_K = True           # set False if your CrewAI/Gemini setup rejects top_k
+REASONING_EFFORT = "low"   # less "thinking" time = much faster. Set None to disable.
+PARALLEL_WRITERS = True    # blog / LinkedIn / Twitter run at the same time (faster)
+MAX_RPM = 10               # free-tier friendly request limit (was 8)
 
 
-def build_llm(model: str, api_key: str, profile: str, level: int = 0) -> LLM:
-    """level 0 = all tuning params, 1 = drop top_k + reasoning_effort, 2 = plain model (safest).
-    If a Gemini/CrewAI version rejects an optional parameter, run_step() lowers the level automatically."""
-    p = PROFILES[profile]
-    kw = dict(model=model, api_key=api_key, max_tokens=p["max_tokens"])
-    if level < 2:
-        kw["timeout"] = REQUEST_TIMEOUT
-        if TUNE_SAMPLING:
-            kw["temperature"] = p["sampling"]["temperature"]
-            kw["top_p"] = p["sampling"]["top_p"]
-            if level < 1:
-                kw["top_k"] = p["sampling"]["top_k"]
-        if SEND_THINKING and level < 1:
-            kw["reasoning_effort"] = p["thinking"]  # keeps Gemini 3.x "thinking" short = much faster
-    return LLM(**kw)
+def build_llm(model: str, api_key: str, gen: dict, max_tokens: int, safe: bool = False) -> LLM:
+    kwargs = dict(model=model, api_key=api_key, max_tokens=max_tokens,
+                  temperature=gen["temperature"], top_p=gen["top_p"])
+    if not safe:  # "safe" mode = retry without the optional extras if the provider rejects them
+        if USE_TOP_K:
+            kwargs["top_k"] = gen["top_k"]
+        if REASONING_EFFORT:
+            kwargs["reasoning_effort"] = REASONING_EFFORT
+    return LLM(**kwargs)
 
 
-# ------------------------------------------------------------------ multi-model fallback
-class ModelPool:
-    """Thread-safe model list. A model that hit a limit is put on cooldown so every step skips it instantly."""
-
-    def __init__(self, models, api_key):
-        self.models, self.api_key = list(models), api_key
-        self.cool_until = {m: 0.0 for m in self.models}
-        self.level = 0                 # shared "parameter safety level" (see build_llm)
-        self.t0 = time.time()
-        self._lock = threading.Lock()
-
-    def available(self):
-        now = time.time()
-        with self._lock:
-            ready = [m for m in self.models if self.cool_until[m] <= now]
-            return ready or sorted(self.models, key=lambda m: self.cool_until[m])
-
-    def penalise(self, model, seconds):
-        if seconds:
-            with self._lock:
-                self.cool_until[model] = time.time() + seconds
-
-    def degrade(self, seen_level: int) -> bool:
-        """Lower the parameter level once (shared by all threads). True = worth retrying right away."""
-        with self._lock:
-            if self.level > seen_level:
-                return True
-            if self.level < 2:
-                self.level += 1
-                return True
-            return False
-
-
-def classify(err) -> tuple:
-    """-> (kind, cooldown_seconds). 'fatal' = stop (bad key), 'param' = a request parameter was rejected."""
-    s = str(err).lower()
-    if "api key" in s or "api_key_invalid" in s or "permission" in s or re.search(r"\b(401|403)\b", s):
-        return "fatal", 0
-    if any(x in s for x in ("429", "quota", "rate limit", "resource_exhausted")):
-        daily = "per day" in s or "daily" in s or "perday" in s
-        return "limit", 900 if daily else 65
-    if any(x in s for x in ("503", "unavailable", "high demand", "overloaded", "timeout", "timed out")):
-        return "busy", 8
-    if "404" in s or "not_found" in s:
-        return "gone", 24 * 3600
-    if any(x in s for x in ("400", "invalid_argument", "unexpected keyword", "unknown name", "not supported",
-                            "unsupported", "extra_forbidden", "validation error", "unrecognized")):
-        return "param", 0
-    return "other", 0
-
-
-def run_step(pool, label, profile, make, emit, rounds=5):
-    """Run ONE agent/task. On failure only this step switches model; nothing else restarts.
-
-    Every failure is printed to the server log as '[writify] ...' (Streamlit Cloud: Manage app > Logs)."""
-    last = None
-    rnd = 0
-    while rnd < rounds:
-        restart = False
-        for model in pool.available():
-            if time.time() - pool.t0 > MAX_RUN_SECONDS:
-                raise RuntimeError(f"Step '{label}' timed out after {MAX_RUN_SECONDS}s. Last error: {last}")
-            level = pool.level
-            try:
-                agent, task = make(build_llm(model, pool.api_key, profile, level))
-                Crew(agents=[agent], tasks=[task], process=Process.sequential,
-                     verbose=False, memory=False).kickoff()
-                return str(task.output.raw), model
-            except Exception as e:  # noqa: BLE001
-                kind, cool = classify(e)
-                print(f"[writify] step={label} model={model} level={level} kind={kind}: {str(e)[:400]}", flush=True)
-                if kind == "fatal":
-                    raise
-                last = e
-                if kind == "param" and pool.degrade(level):
-                    restart = True      # an optional parameter was rejected -> retry with safer settings
-                    break
-                if kind == "other" and rnd >= 1:
-                    raise               # not a busy/limit problem: show the real error instead of looping
-                pool.penalise(model, cool)
-                emit("fallback", label, f"{model.split('/')[-1]} is {kind}. Trying the next model.")
-        if restart:
-            continue
-        rnd += 1
-        if rnd < rounds:
-            time.sleep(min(45, 6 * 2 ** (rnd - 1)) + random.random() * 3)
-    raise RuntimeError(f"All Gemini models failed for step '{label}'. Last error: {last}")
-
-
-# ------------------------------------------------------------------ research cache (shared across reruns)
-_CACHE: dict = {}
-_CACHE_LOCK = threading.Lock()
-
-
-def _cache_get(key):
-    with _CACHE_LOCK:
-        hit = _CACHE.get(key)
-        if hit and time.time() - hit[0] < CACHE_TTL:
-            return hit[1], list(hit[2])
-    return None
-
-
-def _cache_put(key, evidence, sources):
-    with _CACHE_LOCK:
-        _CACHE[key] = (time.time(), evidence, list(sources))
-
-
-# ------------------------------------------------------------------ helpers
 def resolve_outputs(selected) -> set:
-    """SEO editing needs a blog draft, so the blog is WRITTEN in the background (shown only if selected)."""
+    """SEO editing needs a blog draft, so the blog is WRITTEN in the background (it is only shown if selected)."""
     s = set(selected)
     if "seo" in s:
         s.add("blog")
@@ -205,7 +56,7 @@ def resolve_outputs(selected) -> set:
 
 
 def plan_steps(selected) -> list:
-    """Ordered (key, agent name) steps for the progress bar. Research always runs."""
+    """Ordered (key, agent name) steps that will run. Research always runs."""
     s = resolve_outputs(selected)
     steps = [("research", "Researcher")]
     for key, name in [("blog", "Blog Writer"), ("linkedin", "LinkedIn Writer"), ("twitter", "Twitter/X Writer"),
@@ -215,255 +66,213 @@ def plan_steps(selected) -> list:
     return steps
 
 
-def _dedupe(sources):
-    seen, out = set(), []
-    for s in sources:
-        if s["url"] not in seen:
-            seen.add(s["url"])
-            out.append(s)
-    return out
-
-
-def _rules(topic: str) -> str:
-    today = dt.date.today().strftime("%d %B %Y")
-    return (
-        f"TODAY'S DATE: {today}.\n"
-        f"TOPIC LOCK: everything you write must be directly about '{topic}'. Never drift into related-but-different "
-        "subjects, even if they appear in search results or in your own knowledge.\n"
-        "EVIDENCE RULE: use ONLY facts that appear in the provided evidence. Every number, date, name or quote must "
-        "exist in the evidence. If something is missing, leave it out or write 'not available'. "
-        "Never guess. Never invent sources, URLs, statistics or quotes.\n")
-
-
-def _make(role, goal, backstory, description, expected, tools=None):
-    def build(llm):
-        agent = Agent(role=role, goal=goal, backstory=backstory, tools=tools or [], llm=llm,
-                      allow_delegation=False, verbose=False, max_iter=4, respect_context_window=True)
-        task = Task(description=description, expected_output=expected, agent=agent)
-        return agent, task
-    return build
-
-
-# ------------------------------------------------------------------ main runner
-def run_studio(cfg: dict, primary_model: str, api_key: str, on_event=None) -> dict:
-    """on_event(kind, key, detail): kind in {'start','done','fallback'}; always called from the caller's thread."""
+def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = False) -> dict:
     sel = resolve_outputs(cfg["outputs"])
-    show = set(cfg["outputs"])
     topic, audience, tone, language = cfg["topic"], cfg["audience"], cfg["tone"], cfg["language"]
     words = LENGTHS[cfg["length"]]
     keywords = cfg.get("keywords") or "(none given - choose the best ones yourself)"
     lang_rule = f"Write everything in {language}."
-    rules = _rules(topic)
 
-    order = ([primary_model] + [m for m in MODELS.values() if m != primary_model]
-             + [m for m in EXTRA_FALLBACKS if m != primary_model])
-    pool = ModelPool(order, api_key)
-    used: dict = {}
-
-    # worker threads never touch Streamlit; they post events here and the caller's thread delivers them
-    q: queue.Queue = queue.Queue()
-
-    def pump(timeout=0.0):
-        evs = []
-        try:
-            evs.append(q.get(timeout=timeout) if timeout else q.get_nowait())
-            while True:
-                evs.append(q.get_nowait())
-        except queue.Empty:
-            pass
-        for e in evs:
-            if on_event:
-                on_event(*e)
-
-    def run_jobs(jobs: dict, workers: int) -> dict:
-        results = {}
-        if not jobs:
-            return results
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-            futs = {k: ex.submit(fn) for k, fn in jobs.items()}
-            while not all(f.done() for f in futs.values()):
-                pump(0.3)
-            pump()
-            for k, f in futs.items():
-                results[k] = f.result()   # re-raises the real error if a step failed on every model
-        return results
-
-    def step(label, profile, make, start_key=None, done_key=None):
-        if start_key:
-            q.put(("start", start_key, ""))
-        text, model = run_step(pool, label, profile, make, lambda *e: q.put(e))
-        used[label] = model
-        if done_key:
-            q.put(("done", done_key, model))
-        return text
+    # Token limits per job: enough for the task, but stops the model from rambling (= faster)
+    blog_tokens = max(2048, int(words * 3.5))
+    llm_research = build_llm(model, api_key, GEN_PRECISE, 3500, safe)
+    llm_check = build_llm(model, api_key, GEN_PRECISE, 2500, safe)
+    llm_blog = build_llm(model, api_key, GEN_WRITER, blog_tokens, safe)
+    llm_seo = build_llm(model, api_key, GEN_WRITER, blog_tokens + 800, safe)
+    llm_social = build_llm(model, api_key, GEN_WRITER, 1200, safe)
 
     sources: list = []
-    web_search, news_search = make_search_tools(sources, topic)
+    web_search, news_search = make_search_tools(sources)
 
-    # ---------------- 1) research -> compact EVIDENCE PACK (cached per topic)
-    cache_key = (topic.lower().strip(), keywords.lower().strip(), audience.lower().strip())
-    research_done_here = None if "research" in show else "research"   # else the formal report closes this step
-    cached = _cache_get(cache_key)
-    if cached:
-        evidence, cached_sources = cached
-        sources.extend(cached_sources)
-        q.put(("start", "research", "cache"))
-        if research_done_here:
-            q.put(("done", "research", "cache"))
-        pump()
-    else:
-        research = _make(
-            "Senior Research Analyst",
-            f"Collect accurate, current, well-sourced facts about '{topic}' - nothing else.",
-            "You are a meticulous analyst. You only report what a search result supports, you mark anything "
-            "uncertain, and you ignore results that are not clearly about the topic.",
-            (f"{rules}\nResearch the topic: '{topic}'. Audience: {audience}. Focus keywords: {keywords}.\n"
-             "Run 3-4 searches in total (web search first; news search only if the topic is time-sensitive). "
-             "Every query must contain the main words of the topic. Discard results that are not about it.\n"
-             "Write the EVIDENCE PACK in English even if the final language is different."),
-            ("An EVIDENCE PACK in markdown:\n"
-             "## Key facts\n- <fact with numbers/dates exactly as found> (Source: <exact URL from the search results>)\n"
-             "  (10-15 bullets)\n"
-             "## Trends\n- <trend> (Source: <exact URL>)  (3-5 bullets)\n"
-             "## Suggested outline\n(5-7 section headings)\n"
-             "## Gaps\n- things you could not verify"),
-            tools=[web_search, news_search])
-        evidence = run_jobs(
-            {"research": lambda: step("research", "research", research,
-                                      start_key="research", done_key=research_done_here)}, 1)["research"]
-        _cache_put(cache_key, evidence, sources)
-        pump()
+    # Strict topic lock, added to every task to stop drifting / invented content
+    lock = (f"\nSTRICT RULES: Stay 100% on the topic '{topic}'. Every sentence must be directly about it. "
+            "Ignore anything off-topic. If you have no evidence for a point, leave it out instead of guessing. "
+            "Never invent facts, numbers, names, quotes, dates or URLs.")
 
-    # ---------------- 2) phase A: independent agents in parallel
-    jobs = {}
+    common = dict(allow_delegation=False, verbose=False, respect_context_window=True)
 
-    if "research" in show:
-        src_list = "\n".join(f"[{i}] {s['title']} - {s['url']}" for i, s in enumerate(_dedupe(sources)[:15], 1)) \
-            or "(no sources captured)"
-        report = _make(
-            "Research Report Writer",
-            "Turn the evidence pack into a formal, accurate research report.",
-            "You write formal reports that contain only what the evidence supports.",
-            (f"{rules}\nWrite a FORMAL RESEARCH REPORT on '{topic}' for {audience}.\n"
-             f"EVIDENCE PACK:\n{evidence}\n\nSOURCE LIST (the only valid sources; cite inline as [n]):\n{src_list}\n"
-             "Do NOT write a References section - it is added automatically. Cite only numbers from the SOURCE LIST. "
-             f"{lang_rule}"),
-            ("A formal research report in markdown with EXACTLY these sections:\n"
-             "# <Report title>\n**Prepared for:** the audience | **Date:** today's date | **Focus keywords:** ...\n"
-             "## Abstract (3-4 sentences)\n## 1. Introduction and Background\n"
-             "## 2. Research Objectives and Key Questions\n## 3. Methodology\n## 4. Key Findings (with [n] citations)\n"
-             "## 5. Current Trends and Analysis\n## 6. Discussion and Implications\n## 7. Limitations\n"
-             "## 8. Conclusion and Recommendations"))
-        jobs["research_report"] = lambda: step("research_report", "report", report, done_key="research")
+    # Which content tasks may run in parallel? (CrewAI allows only ONE async task at the very end of a crew.)
+    content_keys = [k for k in ("blog", "linkedin", "twitter") if k in sel]
+    later_sync = ("seo" in sel) or ("factcheck" in sel)
+    async_keys = set()
+    if PARALLEL_WRITERS:
+        async_keys = set(content_keys if later_sync else content_keys[:-1])
+
+    agents, tasks = [], []
+
+    researcher = Agent(
+        role="Senior Research Analyst",
+        goal=f"Collect accurate, current and well-sourced facts about '{topic}' only.",
+        backstory="You are a meticulous analyst. You only report what you can support with a source, "
+                  "and you clearly mark anything uncertain. You never invent statistics or URLs.",
+        llm=llm_research, max_iter=5, tools=[web_search, news_search], **common)
+    research_t = Task(
+        description=(
+            f"Research the topic: '{topic}'.\nTarget audience: {audience}.\nFocus keywords: {keywords}.\n"
+            "Use the search tools (maximum 3 searches in total: 1-2 web + 1 news). EVERY search query must contain "
+            f"the main topic words of '{topic}'. Ignore results that are not clearly about this topic. "
+            "Prefer reputable sources (institutions, journals, major publishers).\n"
+            "Write a CONCISE formal research report (max ~800 words) using the structure in the expected output. "
+            "Cite sources inline with numbered brackets like [1], [2] and list them in References. "
+            "Only cite URLs that appeared in the search results.\n"
+            f"{lang_rule}{lock}"),
+        expected_output=(
+            "A concise formal research report in markdown with EXACTLY these sections, in this order:\n"
+            "# <Report title>\n"
+            "**Prepared for:** the target audience | **Date:** today's date | **Focus keywords:** ...\n"
+            "## Abstract (2-3 sentences)\n"
+            "## 1. Introduction and Background\n"
+            "## 2. Methodology (search approach and types of sources, 2-3 sentences)\n"
+            "## 3. Key Findings (facts and statistics, each with an inline citation [n])\n"
+            "## 4. Current Trends and Analysis\n"
+            "## 5. Limitations (gaps, uncertain or unverified data)\n"
+            "## 6. Conclusion and Recommendations\n"
+            "## References (numbered list: Title - Publisher/Domain - URL)"),
+        agent=researcher)
+    agents.append(researcher)
+    tasks.append(research_t)
+
+    blog_t = li_t = tw_t = seo_t = check_t = None
 
     if "blog" in sel:
-        blog = _make(
-            "Expert Blog Writer",
-            "Write an engaging, well-structured, original blog post based strictly on the evidence.",
-            "You are a veteran content writer who turns evidence into clear, useful, human-sounding articles. "
-            "You never add facts that are not in the evidence.",
-            (f"{rules}\nWrite a blog post about '{topic}' for {audience}. Tone: {tone}. Target length: about {words} words.\n"
-             f"EVIDENCE PACK:\n{evidence}\n\nNaturally include these keywords: {keywords}.\n"
-             f"Structure: strong title, hook intro, H2/H3 sections, short paragraphs, conclusion with a CTA.\n{lang_rule}"),
-            "A complete blog post in markdown with title, headings and conclusion.")
-        jobs["blog"] = lambda: step("blog", "blog", blog, start_key="blog", done_key="blog")
+        blogger = Agent(
+            role="Expert Blog Writer",
+            goal="Write an engaging, well-structured, original blog post based strictly on the research notes.",
+            backstory="You are a veteran content writer who turns research into clear, useful and "
+                      "human-sounding articles. You never add facts that are not in the research.",
+            llm=llm_blog, max_iter=3, **common)
+        blog_t = Task(
+            description=(
+                f"Write a blog post about '{topic}' for {audience}. Tone: {tone}. "
+                f"Target length: about {words} words.\nUse ONLY facts from the research notes. "
+                f"Naturally include these keywords: {keywords}.\n"
+                f"Structure: strong title, hook intro, H2/H3 sections, short paragraphs, conclusion with a CTA.\n"
+                f"{lang_rule}{lock}"),
+            expected_output="A complete blog post in markdown with title, headings and conclusion.",
+            agent=blogger, context=[research_t], async_execution="blog" in async_keys)
+        agents.append(blogger)
+        tasks.append(blog_t)
 
+    # LinkedIn / Twitter only need the research, so they can run in parallel with the blog
     if "linkedin" in sel:
-        li = _make(
-            "LinkedIn Content Strategist",
-            "Create a high-performing LinkedIn post that matches the facts.",
-            "You write scroll-stopping LinkedIn posts: strong hook, short paragraphs, real insight, a clear CTA. "
-            "You avoid cliches and fake claims.",
-            (f"{rules}\nWrite ONE LinkedIn post (150-250 words) about '{topic}'. Tone: {tone}. Audience: {audience}. "
-             "Strong hook, short lines, 3-5 relevant hashtags, a call-to-action.\n"
-             f"EVIDENCE PACK:\n{evidence}\n{lang_rule}"),
-            "A ready-to-publish LinkedIn post (plain text with line breaks and hashtags).")
-        jobs["linkedin"] = lambda: step("linkedin", "linkedin", li, start_key="linkedin", done_key="linkedin")
+        a = Agent(
+            role="LinkedIn Content Strategist",
+            goal="Create a high-performing LinkedIn post that matches the facts.",
+            backstory="You write scroll-stopping LinkedIn posts: strong hook, short paragraphs, real insight, "
+                      "a clear call-to-action. You avoid cliches and fake claims.",
+            llm=llm_social, max_iter=3, **common)
+        li_t = Task(
+            description=(
+                f"Write ONE LinkedIn post (150-250 words) about '{topic}'. Tone: {tone}. Audience: {audience}. "
+                "Start with a strong hook, use short lines, add 3-5 relevant hashtags and a call-to-action. "
+                f"Use only facts from the research notes. {lang_rule}{lock}"),
+            expected_output="A ready-to-publish LinkedIn post (plain text with line breaks and hashtags).",
+            agent=a, context=[research_t], async_execution="linkedin" in async_keys)
+        agents.append(a)
+        tasks.append(li_t)
 
     if "twitter" in sel:
-        tw = _make(
-            "Twitter/X Thread Writer",
-            "Create a punchy Twitter/X thread that matches the facts.",
-            "You write threads people finish: sharp hook, one idea per tweet, each under 280 characters.",
-            (f"{rules}\nWrite a Twitter/X thread of 6-8 tweets about '{topic}'. Tone: {tone}. "
-             "Number each tweet like 1/, 2/ ... Every tweet MUST be under 280 characters. "
-             "First tweet = hook, last tweet = takeaway + CTA, max 2 hashtags overall.\n"
-             f"EVIDENCE PACK:\n{evidence}\n{lang_rule}"),
-            "A numbered Twitter/X thread, one tweet per paragraph.")
-        jobs["twitter"] = lambda: step("twitter", "twitter", tw, start_key="twitter", done_key="twitter")
-
-    a = run_jobs(jobs, PARALLEL)
-    blog_text = a.get("blog", "")
-
-    # ---------------- 3) phase B: SEO and fact-check run in parallel
-    jobs = {}
+        a = Agent(
+            role="Twitter/X Thread Writer",
+            goal="Create a punchy Twitter/X thread that matches the facts.",
+            backstory="You write threads people actually finish: a sharp hook, one idea per tweet, "
+                      "each under 280 characters, and a strong closing tweet.",
+            llm=llm_social, max_iter=3, **common)
+        tw_t = Task(
+            description=(
+                f"Write a Twitter/X thread of 6-8 tweets about '{topic}'. Tone: {tone}. "
+                "Number each tweet like 1/, 2/ ... Every tweet MUST be under 280 characters. "
+                "First tweet = strong hook, last tweet = takeaway + CTA, max 2 hashtags overall. "
+                f"Use only facts from the research notes. {lang_rule}{lock}"),
+            expected_output="A numbered Twitter/X thread, one tweet per paragraph.",
+            agent=a, context=[research_t], async_execution="twitter" in async_keys)
+        agents.append(a)
+        tasks.append(tw_t)
 
     if "seo" in sel:
-        seo = _make(
-            "SEO Editor",
-            "Polish the blog for readability and search ranking without changing the facts.",
-            "You are a technical SEO editor. You improve headings, keyword placement, readability and metadata "
-            "while keeping the writer's voice and the facts intact.",
-            (f"{rules}\nEdit the blog post below for SEO and readability. Keywords: {keywords}. Improve title, headings, "
-             "keyword placement (no stuffing), intro and readability. Do NOT add new facts.\n"
-             f"BLOG:\n{blog_text}\n\n"
-             f"Output format (strict): first the FINAL polished blog in markdown, then a line containing exactly "
-             f"{SEO_DELIMITER} and after it the SEO metadata: SEO title (<=60 chars), meta description (<=155 chars), "
-             "URL slug, primary keyword, 5 secondary keywords, and a short list of internal-link and image-alt "
-             f"suggestions. {lang_rule}"),
-            f"Final blog markdown, then {SEO_DELIMITER}, then SEO metadata.")
-        jobs["seo"] = lambda: step("seo", "seo", seo, start_key="seo", done_key="seo")
+        a = Agent(
+            role="SEO Editor",
+            goal="Polish the blog for readability and search ranking without changing the facts.",
+            backstory="You are a technical SEO editor. You improve headings, keyword placement, readability and "
+                      "metadata while keeping the writer's voice and the facts intact.",
+            llm=llm_seo, max_iter=3, **common)
+        seo_t = Task(
+            description=(
+                f"Edit the blog post for SEO and readability. Keywords: {keywords}. Improve the title, headings, "
+                "keyword placement (no stuffing), intro and readability. Do NOT add new facts.\n"
+                f"Output format (strict): first the FINAL polished blog in markdown, then a line containing exactly "
+                f"{SEO_DELIMITER} and after it the SEO metadata: SEO title (<=60 chars), meta description "
+                "(<=155 chars), URL slug, primary keyword, 5 secondary keywords, and a short list of "
+                f"internal-link and image-alt suggestions. {lang_rule}{lock}"),
+            expected_output=f"Final blog markdown, then {SEO_DELIMITER}, then SEO metadata.",
+            agent=a, context=[blog_t])
+        agents.append(a)
+        tasks.append(seo_t)
 
     if "factcheck" in sel:
-        content = "\n\n".join(f"### {k.upper()}\n{v}" for k, v in
-                              (("blog", blog_text), ("linkedin", a.get("linkedin", "")), ("twitter", a.get("twitter", "")))
-                              if v)
-        check = _make(
-            "Fact-Checker",
-            "Honestly verify every important claim in the content against the evidence and the web.",
-            "You are a skeptical fact-checker. You flag unsupported, outdated or exaggerated claims and never "
-            "rubber-stamp content. If something is wrong you say so plainly.",
-            (f"{rules}\nFact-check the CONTENT below against the EVIDENCE PACK. List the 5-10 most important factual "
-             "claims. For each give: the claim, a verdict (Verified / Unverified / Incorrect) and the evidence or "
-             "source. You may run up to 3 web searches for doubtful claims. Do not approve claims you cannot support.\n"
-             f"End with an overall reliability score out of 10 and a list of exact fixes. {lang_rule}\n\n"
-             f"EVIDENCE PACK:\n{evidence}\n\nCONTENT:\n{content}"),
-            "A markdown fact-check report: claims table, overall score /10, required fixes.",
-            tools=[web_search])
-        jobs["factcheck"] = lambda: step("factcheck", "factcheck", check, start_key="factcheck", done_key="factcheck")
+        a = Agent(
+            role="Fact-Checker",
+            goal="Honestly verify every important claim in the content against the research and the web.",
+            backstory="You are a skeptical fact-checker. You flag unsupported, outdated or exaggerated claims "
+                      "and never rubber-stamp content. If something is wrong you say so plainly.",
+            llm=llm_check, max_iter=4, tools=[web_search], **common)
+        ctx = [research_t] + [t for t in (seo_t or blog_t, li_t, tw_t) if t is not None]
+        check_t = Task(
+            description=(
+                "Fact-check the generated content against the research notes. List the 5-8 most important "
+                "factual claims. For each give: the claim, a verdict (Verified / Unverified / Incorrect) and "
+                "the evidence or source. You may run up to 2 web searches for doubtful claims. Be honest - "
+                "do not approve claims you cannot support. Also flag any sentence that drifts away from the topic "
+                f"'{topic}'.\nEnd with an overall reliability score out of 10 "
+                f"and a list of exact fixes the author should make. {lang_rule}"),
+            expected_output="A markdown fact-check report: claims table, overall score /10, required fixes.",
+            agent=a, context=ctx)
+        agents.append(a)
+        tasks.append(check_t)
 
-    b = run_jobs(jobs, PARALLEL)
+    crew = Crew(agents=agents, tasks=tasks, process=Process.sequential, verbose=False,
+                memory=False, max_rpm=MAX_RPM, task_callback=on_task_done)
+    crew.kickoff()
 
-    # ---------------- 4) assemble exactly the dict app.py already expects
+    show = set(cfg["outputs"])  # only what the user actually selected is delivered
     out = {k: "" for k in ("research", "blog", "linkedin", "twitter", "seo", "factcheck")}
-    srcs = _dedupe(sources)
-
     if "research" in show:
-        text = a["research_report"]
-        if srcs:
-            text += "\n\n## References\n" + "\n".join(f"{i}. {s['title']} - {s['url']}" for i, s in enumerate(srcs[:15], 1))
-        out["research"], out["sources"] = text, srcs
+        out["research"] = research_t.output.raw
+        out["sources"] = sources
     else:
         out["sources"] = []
-
-    if "linkedin" in show:
-        out["linkedin"] = a.get("linkedin", "")
-    if "twitter" in show:
-        out["twitter"] = a.get("twitter", "")
-    if "factcheck" in show:
-        out["factcheck"] = b.get("factcheck", "")
-
-    if "seo" in b:
-        raw = b["seo"]
+    if li_t and "linkedin" in show:
+        out["linkedin"] = li_t.output.raw
+    if tw_t and "twitter" in show:
+        out["twitter"] = tw_t.output.raw
+    if check_t and "factcheck" in show:
+        out["factcheck"] = check_t.output.raw
+    if seo_t:
+        raw = seo_t.output.raw
         if SEO_DELIMITER in raw:
-            blog_final, meta = raw.split(SEO_DELIMITER, 1)
+            blog, meta = raw.split(SEO_DELIMITER, 1)
         else:
-            blog_final, meta = raw, "SEO metadata was not returned separately."
+            blog, meta = raw, "SEO metadata was not returned separately."
         out["seo"] = meta.strip()
         if "blog" in show:
-            out["blog"] = blog_final.strip()
-    elif "blog" in show:
-        out["blog"] = blog_text
-
-    out["models_used"] = used
+            out["blog"] = blog.strip()
+    elif blog_t and "blog" in show:
+        out["blog"] = blog_t.output.raw
     return out
+
+
+_PARAM_ERRORS = ("top_k", "topk", "reasoning", "thinking", "unknown name", "unexpected keyword",
+                 "extra_forbidden", "unsupported", "not supported")
+_NOT_PARAM_ERRORS = ("api key", "quota", "429", "503", "unavailable", "high demand", "not_found", "404")
+
+
+def run_studio(cfg: dict, model: str, api_key: str, on_task_done=None) -> dict:
+    """Runs the crew. If the provider rejects the optional extras (top_k / reasoning_effort),
+    it automatically retries once with only temperature + top_p."""
+    try:
+        return _run(cfg, model, api_key, on_task_done, safe=False)
+    except Exception as e:  # noqa: BLE001
+        msg = str(e).lower()
+        if any(x in msg for x in _PARAM_ERRORS) and not any(x in msg for x in _NOT_PARAM_ERRORS):
+            return _run(cfg, model, api_key, on_task_done, safe=True)
+        raise
