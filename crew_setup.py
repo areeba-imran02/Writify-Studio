@@ -2,6 +2,9 @@
 
 from crewai import Agent, Crew, LLM, Process, Task
 
+import datetime as dt
+
+import guard
 from tools import make_search_tools
 
 SEO_DELIMITER = "=====SEO_META====="
@@ -82,12 +85,12 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
     llm_social = build_llm(model, api_key, GEN_WRITER, 1200, safe)
 
     sources: list = []
-    web_search, news_search = make_search_tools(sources)
+    web_search, news_search = make_search_tools(sources, topic)
 
     # Strict topic lock, added to every task to stop drifting / invented content
     lock = (f"\nSTRICT RULES: Stay 100% on the topic '{topic}'. Every sentence must be directly about it. "
             "Ignore anything off-topic. If you have no evidence for a point, leave it out instead of guessing. "
-            "Never invent facts, numbers, names, quotes, dates or URLs.")
+            "Never invent facts, numbers, names, quotes, dates or URLs. Every number or statistic MUST come word-for-word from the research notes; if it is not there, do not write it.")
 
     common = dict(allow_delegation=False, verbose=False, respect_context_window=True)
 
@@ -234,30 +237,59 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
                 memory=False, max_rpm=MAX_RPM, task_callback=on_task_done)
     crew.kickoff()
 
-    show = set(cfg["outputs"])  # only what the user actually selected is delivered
-    out = {k: "" for k in ("research", "blog", "linkedin", "twitter", "seo", "factcheck")}
-    if "research" in show:
-        out["research"] = research_t.output.raw
-        out["sources"] = sources
-    else:
-        out["sources"] = []
-    if li_t and "linkedin" in show:
-        out["linkedin"] = li_t.output.raw
-    if tw_t and "twitter" in show:
-        out["twitter"] = tw_t.output.raw
-    if check_t and "factcheck" in show:
-        out["factcheck"] = check_t.output.raw
+    # ------------------------------------------------------------------
+    # Code-level hallucination guard (links + numbers checked against real search results)
+    # ------------------------------------------------------------------
+    if len(sources) < 2:
+        raise RuntimeError("Not enough real sources were found for this topic, so generation was stopped to avoid "
+                           "made-up content. Try a more specific topic or run again in a minute.")
+    allowed = guard.allowed_url_set(sources)
+    evidence = "\n".join(f"{s['title']} {s.get('body', '')}" for s in sources)
+    extra = f"{topic} {keywords} {audience} {dt.date.today().isoformat()}"
+    notes: list = []
+
+    def urls(t):
+        return guard.clean_urls(t, allowed, notes)
+
+    research_raw = urls(research_t.output.raw)
+    research_raw = guard.clean_numbers(research_raw, guard.support_numbers(evidence, extra), notes, True, "Research")
+    support = guard.support_numbers(research_raw, evidence, extra)
+
+    def writer(task, label, drop=True):
+        return guard.clean_numbers(urls(task.output.raw), support, notes, drop, label) if task else ""
+
+    li_raw = writer(li_t, "LinkedIn")
+    tw_raw = writer(tw_t, "Twitter/X", drop=False)
+    check_raw = urls(check_t.output.raw) if check_t else ""
+    blog_raw = ""
+    seo_meta = ""
     if seo_t:
         raw = seo_t.output.raw
         if SEO_DELIMITER in raw:
-            blog, meta = raw.split(SEO_DELIMITER, 1)
+            b, seo_meta = raw.split(SEO_DELIMITER, 1)
         else:
-            blog, meta = raw, "SEO metadata was not returned separately."
-        out["seo"] = meta.strip()
-        if "blog" in show:
-            out["blog"] = blog.strip()
-    elif blog_t and "blog" in show:
-        out["blog"] = blog_t.output.raw
+            b, seo_meta = raw, "SEO metadata was not returned separately."
+        blog_raw = guard.clean_numbers(urls(b), support, notes, True, "Blog")
+        seo_meta = urls(seo_meta)
+    elif blog_t:
+        blog_raw = writer(blog_t, "Blog")
+
+    note_md = guard.notes_markdown(notes)
+    show = set(cfg["outputs"])  # only what the user actually selected is delivered
+    out = {k: "" for k in ("research", "blog", "linkedin", "twitter", "seo", "factcheck")}
+    out["sources"] = sources if "research" in show else []
+    if "research" in show:
+        out["research"] = research_raw.strip() + note_md
+    if li_t and "linkedin" in show:
+        out["linkedin"] = li_raw.strip()
+    if tw_t and "twitter" in show:
+        out["twitter"] = tw_raw.strip()
+    if check_t and "factcheck" in show:
+        out["factcheck"] = check_raw.strip() + note_md
+    if seo_t:
+        out["seo"] = seo_meta.strip()
+    if "blog" in show:
+        out["blog"] = blog_raw.strip()
     return out
 
 
