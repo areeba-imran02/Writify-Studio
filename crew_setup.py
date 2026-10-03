@@ -11,6 +11,7 @@ v2 changes
 import datetime as dt
 import os
 import queue
+import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -21,13 +22,15 @@ from tools import make_search_tools
 
 SEO_DELIMITER = "=====SEO_META====="
 
-# Order = fallback order after the model the user picked. 4 models = 4 separate quotas.
+# Fallback order. The first model is used first; if it is busy / out of quota the SAME step silently
+# continues on the next one (no message is shown to the user). 4 main models + 2 hidden backups.
 MODELS = {
-    "Gemini 3.8 Flash (recommended)": "gemini/gemini-3.8-flash",
-    "Gemini 3.5 Flash (stable)": "gemini/gemini-3.5-flash",
-    "Gemini 3.5 Flash-Lite (fast)": "gemini/gemini-3.5-flash-lite",
-    "Gemini 3.1 Flash-Lite (fast)": "gemini/gemini-3.1-flash-lite",
+    "Gemini 3.5 Flash": "gemini/gemini-3.5-flash",
+    "Gemini 3.8 Flash": "gemini/gemini-3.8-flash",
+    "Gemini 3.5 Flash-Lite": "gemini/gemini-3.5-flash-lite",
+    "Gemini 3.1 Flash-Lite": "gemini/gemini-3.1-flash-lite",
 }
+EXTRA_FALLBACKS = ["gemini/gemini-2.5-flash", "gemini/gemini-2.5-flash-lite"]  # last resort
 
 LENGTHS = {"Short (~500 words)": 500, "Medium (~900 words)": 900, "Long (~1500 words)": 1500}
 CUSTOM_LANG = "Custom language..."
@@ -106,13 +109,13 @@ def classify(err) -> tuple:
         daily = "per day" in s or "daily" in s or "perday" in s
         return "limit", 900 if daily else 65
     if any(x in s for x in ("503", "unavailable", "high demand", "overloaded", "timeout", "timed out")):
-        return "busy", 20
+        return "busy", 8
     if "404" in s or "not_found" in s:
         return "gone", 24 * 3600
     return "other", 0
 
 
-def run_step(pool, label, profile, make, emit, rounds=3):
+def run_step(pool, label, profile, make, emit, rounds=5):
     """Run ONE agent/task. On failure only this step switches model; nothing else restarts."""
     last = None
     for rnd in range(rounds):
@@ -129,7 +132,7 @@ def run_step(pool, label, profile, make, emit, rounds=3):
                 pool.penalise(model, cool)
                 last = e
                 emit("fallback", label, f"{model.split('/')[-1]} is {kind}. Trying the next model.")
-        time.sleep(min(30, 8 * (rnd + 1)))
+        time.sleep(min(45, 6 * 2 ** rnd) + random.random() * 3)
     raise RuntimeError(f"All Gemini models failed for step '{label}'. Last error: {last}")
 
 
@@ -211,7 +214,8 @@ def run_studio(cfg: dict, primary_model: str, api_key: str, on_event=None) -> di
     lang_rule = f"Write everything in {language}."
     rules = _rules(topic)
 
-    order = [primary_model] + [m for m in MODELS.values() if m != primary_model]
+    order = ([primary_model] + [m for m in MODELS.values() if m != primary_model]
+             + [m for m in EXTRA_FALLBACKS if m != primary_model])
     pool = ModelPool(order, api_key)
     used: dict = {}
 
@@ -286,7 +290,7 @@ def run_studio(cfg: dict, primary_model: str, api_key: str, on_event=None) -> di
         evidence = run_jobs(
             {"research": lambda: step("research", "research", research,
                                       start_key="research", done_key=research_done_here)}, 1)["research"]
-     _cache_put(cache_key, evidence, sources)
+        _cache_put(cache_key, evidence, sources)
         pump()
 
     # ---------------- 2) phase A: independent agents in parallel
