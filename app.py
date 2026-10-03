@@ -9,11 +9,11 @@ import zipfile
 import datetime as dt
 from urllib.parse import quote_plus, urlparse
 
-try: Streamlit Cloud ships an old sqlite3; crewai needs a newer one
-    __import__("pysqlite3")
-    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+try:  # Streamlit Cloud ships an old sqlite3; crewai needs a newer one
+    __import__("pysqlite3")
+    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
 except ImportError:
-    pass
+    pass
 
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
@@ -23,14 +23,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from crew_setup import (CUSTOM_LANG, LANGUAGES, LENGTHS, MODELS, OUTPUTS, TONES,  # noqa: E402
-                        plan_steps, resolve_outputs, run_studio)
+from crew_setup import (CUSTOM_LANG, LANGUAGES, LENGTHS, MODELS, OUTPUTS, TONES,  # noqa: E402
+                        plan_steps, resolve_outputs, run_studio)
 
 st.set_page_config(page_title="Writify Studio | Research. Write. Verify.", page_icon=":material/auto_awesome:", layout="wide")
 
 # ------------------------------------------------------------------ theme
 BASE_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Sora:wght@500;600;700;800&family=Manrope:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Manrope:wght@400;500;600;700&display=swap');
 
 .stApp {background: linear-gradient(160deg,#E6FAF1 0%,#FFF9E6 55%,#FFEBDD 100%) !important; color:#0F3D36 !important;}
 header[data-testid="stHeader"] {background: rgba(230,250,241,.85) !important; backdrop-filter: blur(6px);}
@@ -43,7 +43,7 @@ header[data-testid="stHeader"] {background: rgba(230,250,241,.85) !important; ba
 
 /* ---------- inputs ---------- */
 .stApp [data-baseweb="textarea"], .stApp [data-baseweb="base-input"], .stApp [data-baseweb="input"] {
-  background:#F1FCF7 !important; border:1.5px solid #9BDDC8 !important; border-radius:12px !important;}
+  background:#F1FCF7 !important; border:1.5px solid #9BDDC8 !important; border-radius:12px !important;}
 .stApp textarea, .stApp input {background:transparent !important; color:#0F3D36 !important; -webkit-text-fill-color:#0F3D36 !important;}
 .stApp textarea::placeholder, .stApp input::placeholder {color:#5B8F84 !important; -webkit-text-fill-color:#5B8F84 !important; opacity:1;}
 div[data-baseweb="popover"] ul, div[data-baseweb="popover"] [role="listbox"] {background:#F1FCF7 !important;}
@@ -66,23 +66,23 @@ section[data-testid="stSidebar"] [data-baseweb="select"] svg {fill:#064E3B !impo
 .dot {width:9px; height:9px; border-radius:50%; display:inline-block;}
 .dot.ok {background:#4ADE80; box-shadow:0 0 0 4px rgba(74,222,128,.25);} .dot.bad {background:#FB7185;}
 section[data-testid="stSidebar"] button[kind="secondary"], section[data-testid="stSidebar"] button[data-testid="stBaseButton-secondary"] {
-  background:rgba(255,255,255,.12) !important; border:1px solid rgba(255,255,255,.3) !important;}
+  background:rgba(255,255,255,.12) !important; border:1px solid rgba(255,255,255,.3) !important;}
 section[data-testid="stSidebar"] button p {color:#ECFDF5 !important; font-size:.85rem;}
 
 /* ---------- hero ---------- */
 .hero {position:relative; overflow:hidden; border-radius:22px; padding:38px 42px; margin-bottom:22px;
-  background: radial-gradient(640px 300px at 92% -10%, rgba(94,234,212,.45), transparent 65%),
-              linear-gradient(120deg,#064E3B 0%,#0F766E 52%,#14B8A6 100%);
-  box-shadow:0 18px 40px rgba(6,78,59,.28);}
+  background: radial-gradient(700px 280px at 92% -10%, rgba(251,146,60,.55), transparent 62%),
+              linear-gradient(120deg,#064E3B 0%,#0F766E 52%,#14B8A6 100%);
+  box-shadow:0 18px 40px rgba(6,78,59,.28);}
 .hero .eyebrow {color:#FDE68A; font-size:.78rem; font-weight:700; letter-spacing:.16em; text-transform:uppercase;}
 .hero .hero-title {color:#FFFFFF !important; font-family:'Sora',sans-serif; font-size:2.7rem; font-weight:800; line-height:1.15; margin:6px 0 10px;}
 .hero p {color:#E6FFF8 !important; font-size:1.02rem; max-width:720px; margin:0; line-height:1.6;}
 .hero .chips span {display:inline-block; margin:18px 8px 0 0; padding:5px 13px; border-radius:999px; font-size:.78rem;
-  color:#FFFFFF; background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.35);}
+  color:#FFFFFF; background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.35);}
 
 /* ---------- cards ---------- */
 .st-key-input_card {background:#FFFEF9; border:1px solid #BFEBDD; border-radius:18px; padding:22px 26px 18px;
-  box-shadow:0 8px 26px rgba(15,118,110,.10);}
+  box-shadow:0 8px 26px rgba(15,118,110,.10);}
 .section-title {font-family:'Sora',sans-serif; font-weight:700; font-size:1.02rem; color:#0F3D36; margin:2px 0 6px;}
 .hint {color:#3F6F66; font-size:.86rem; margin-bottom:8px;}
 .note {background:#FEF3C7; border-left:5px solid #F59E0B; color:#134E4A; border-radius:12px; padding:14px 18px; font-size:.95rem;}
@@ -94,7 +94,7 @@ button[kind="secondary"], button[data-testid="stBaseButton-secondary"] {backgrou
 button[kind="secondary"] p, button[data-testid="stBaseButton-secondary"] p {color:#0F3D36 !important;}
 button[kind="secondary"]:hover, button[data-testid="stBaseButton-secondary"]:hover {background:#D1FAE5 !important; border-color:#0F766E !important;}
 button[kind="primary"], button[data-testid="stBaseButton-primary"] {background:linear-gradient(120deg,#0F766E,#16A34A) !important; border:none !important;
-  box-shadow:0 6px 16px rgba(15,118,110,.28);}
+  box-shadow:0 6px 16px rgba(15,118,110,.28);}
 button[kind="primary"] p, button[data-testid="stBaseButton-primary"] p {color:#FFFFFF !important;}
 .st-key-chips button[kind="primary"] p::before, .st-key-chips button[data-testid="stBaseButton-primary"] p::before {content:"\\2713\\00a0\\00a0";}
 .st-key-chips [data-testid="stHorizontalBlock"] {display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px;}
@@ -108,12 +108,12 @@ button[kind="primary"] p, button[data-testid="stBaseButton-primary"] p {color:#F
 .st-key-chip_tools [data-testid="stElementContainer"], .st-key-chip_tools div.stButton, .st-key-chip_tools [data-testid="stButton"] {width:100% !important;}
 .st-key-chip_tools button {min-height:2.4rem; font-size:.85rem;}
 @media (max-width:820px) {
-  .st-key-chips [data-testid="stHorizontalBlock"] {grid-template-columns:repeat(2,minmax(0,1fr));}
-  .st-key-chip_tools [data-testid="stHorizontalBlock"] {grid-template-columns:repeat(2,minmax(0,1fr));}
+  .st-key-chips [data-testid="stHorizontalBlock"] {grid-template-columns:repeat(2,minmax(0,1fr));}
+  .st-key-chip_tools [data-testid="stHorizontalBlock"] {grid-template-columns:repeat(2,minmax(0,1fr));}
 }
 .hint-row {display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:0 0 10px;}
 .badge {display:inline-block; padding:4px 12px; border-radius:999px; font-size:.76rem; font-weight:700; letter-spacing:.02em;
-  background:#CCF5EE; color:#0C3B36; border:1px solid #7FD8BE;}
+  background:#CCF5EE; color:#0C3B36; border:1px solid #7FD8BE;}
 .count {color:#0F766E; font-weight:700; font-size:.9rem;}
 .subnote {color:#134E4A; font-size:.86rem; margin-top:8px; padding:8px 12px; background:#FEF3C7; border-radius:10px; border-left:4px solid #F59E0B;}
 .side-note {color:#A7F3D0; font-size:.85rem;}
@@ -121,7 +121,7 @@ button[kind="primary"] p, button[data-testid="stBaseButton-primary"] p {color:#F
 .srcbox-title {font-family:'Sora',sans-serif; font-weight:700; font-size:.98rem; color:#0F3D36; margin-bottom:10px;}
 .chiprow {display:flex; flex-wrap:wrap;}
 a.linkchip {display:inline-block; margin:0 8px 8px 0; padding:8px 15px; border-radius:999px; background:#F1FCF7; border:1.5px solid #7FD8BE;
-  color:#0F3D36 !important; font-weight:600; font-size:.88rem; text-decoration:none !important;}
+  color:#0F3D36 !important; font-weight:600; font-size:.88rem; text-decoration:none !important;}
 a.linkchip:hover {background:#CFF5E3; border-color:#0F766E;}
 ol.srclist {margin:0; padding-left:20px;}
 ol.srclist li {margin:0 0 8px; color:#0F3D36; line-height:1.4;}
@@ -129,10 +129,10 @@ ol.srclist a {color:#0F766E !important; font-weight:600; text-decoration:none;}
 ol.srclist a:hover {text-decoration:underline;}
 ol.srclist span {color:#3F6F66; font-size:.8rem; margin-left:8px;}
 .st-key-go_wrap button[kind="primary"], .st-key-go_wrap button[data-testid="stBaseButton-primary"] {
-  background:linear-gradient(120deg,#C2410C,#F97316) !important; min-height:3.2rem; font-size:1.05rem; box-shadow:0 10px 24px rgba(234,88,12,.35);}
+  background:linear-gradient(120deg,#C2410C,#F97316) !important; min-height:3.2rem; font-size:1.05rem; box-shadow:0 10px 24px rgba(234,88,12,.35);}
 button:disabled {opacity:.45 !important;}
 .st-key-sel_all button, .st-key-sel_none button {border-radius:999px !important; min-height:2.3rem !important; font-size:.82rem !important;
-  font-weight:700 !important; letter-spacing:.03em; text-transform:uppercase; box-shadow:none !important;}
+  font-weight:700 !important; letter-spacing:.03em; text-transform:uppercase; box-shadow:none !important;}
 .st-key-sel_all button {background:#0B3B36 !important; border:1.5px solid #0B3B36 !important;}
 .st-key-sel_all button p {color:#FFFFFF !important;}
 .st-key-sel_all button:hover {background:#0F766E !important; border-color:#0F766E !important;}
@@ -154,10 +154,10 @@ button:disabled {opacity:.45 !important;}
 .result-head span {color:#0B6B62;}
 .runbar {display:flex; flex-wrap:wrap; gap:10px; margin:0 0 18px;}
 .runbar span {display:inline-flex; align-items:center; gap:8px; padding:8px 16px; border-radius:10px; background:#0B3B36;
-  color:#E6FFF8 !important; font-size:.88rem; font-weight:600; box-shadow:0 4px 12px rgba(6,78,59,.22);}
+  color:#E6FFF8 !important; font-size:.88rem; font-weight:600; box-shadow:0 4px 12px rgba(6,78,59,.22);}
 .runbar b {font-family:'Sora',sans-serif; color:#FDE68A !important; font-weight:800; font-size:1.05rem;}
 .statstrip {display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); background:#FFFFFF; border:1.5px solid #0B3B36;
-  border-radius:14px; margin:6px 0 16px; overflow:hidden; box-shadow:0 8px 22px rgba(6,78,59,.14);}
+  border-radius:14px; margin:6px 0 16px; overflow:hidden; box-shadow:0 8px 22px rgba(6,78,59,.14);}
 .statstrip .cell {padding:16px 22px; border-left:1.5px solid #CFE9E0; border-top:5px solid var(--ac);}
 .statstrip .cell:first-child {border-left:none;}
 .statstrip .v {font-family:'Sora',sans-serif; font-size:1.9rem; font-weight:800; color:#052E2A !important; line-height:1.2;}
@@ -209,7 +209,7 @@ header[data-testid="stHeader"] * {color:#0B3B36 !important;}
 .stApp div[data-baseweb="textarea"]:focus-within, .stApp div[data-baseweb="input"]:focus-within {border-color:#F97316 !important; box-shadow:0 0 0 4px rgba(249,115,22,.18) !important;}
 .stApp div[data-baseweb="base-input"] {border:none !important; background:transparent !important;}
 .stApp textarea, .stApp div[data-testid="stTextInput"] input {background:#FFFFFF !important; color:#052E2A !important; -webkit-text-fill-color:#052E2A !important;
-  font-size:1.05rem !important; font-weight:500 !important; line-height:1.5;}
+  font-size:1.05rem !important; font-weight:500 !important; line-height:1.5;}
 .stApp textarea::placeholder, .stApp input::placeholder {color:#4B7A70 !important; -webkit-text-fill-color:#4B7A70 !important; opacity:1 !important; font-weight:400;}
 
 /* example pills: compact row instead of stretched columns */
@@ -217,7 +217,7 @@ header[data-testid="stHeader"] * {color:#0B3B36 !important;}
 .st-key-examples [data-testid="stColumn"], .st-key-examples [data-testid="column"] {width:auto !important; flex:0 0 auto !important; min-width:0 !important;}
 .st-key-examples [data-testid="stElementContainer"], .st-key-examples div.stButton {width:auto !important;}
 .st-key-examples button {width:auto !important; min-height:2.3rem !important; padding:4px 18px !important; border-radius:999px !important;
-  background:#E3F4EC !important; border:1.5px solid #7FD8BE !important;}
+  background:#E3F4EC !important; border:1.5px solid #7FD8BE !important;}
 .st-key-examples button p {color:#0B3B36 !important; font-weight:700 !important; font-size:.9rem !important;}
 .st-key-examples button:hover {background:#0B3B36 !important; border-color:#0B3B36 !important;}
 .st-key-examples button:hover p {color:#FFFFFF !important;}
@@ -239,7 +239,7 @@ section[data-testid="stSidebar"] {border-right:1px solid rgba(255,255,255,.12); 
 section[data-testid="stSidebar"] .block-container, section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {padding-top:1.4rem !important;}
 .brand {display:flex; align-items:center; gap:12px; font-size:1.5rem !important; padding-bottom:2px;}
 .brand .logo {display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:11px; font-size:1.2rem; font-weight:800;
-  color:#064E3B; background:linear-gradient(135deg,#FDE68A,#FB923C); box-shadow:0 4px 12px rgba(0,0,0,.25);}
+  color:#064E3B; background:linear-gradient(135deg,#FDE68A,#FB923C); box-shadow:0 4px 12px rgba(0,0,0,.25);}
 .brand-sub {padding-bottom:14px; border-bottom:1px solid rgba(255,255,255,.18); color:#A7F3D0 !important; font-weight:700;}
 .side-h {color:#FDE68A !important; font-size:.76rem !important; font-weight:800 !important; padding-top:6px;}
 section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p, section[data-testid="stSidebar"] label p {color:#FFFFFF !important; font-weight:700 !important; font-size:.92rem !important;}
@@ -258,6 +258,8 @@ section[data-testid="stSidebar"] button p {color:#FFFFFF !important; font-weight
 /* =================== FINAL POLISH 2 =================== */
 /* hero shadow was bleeding over the input card (fade at top of card) */
 .hero {padding:44px 46px !important; margin-bottom:34px !important; box-shadow:0 14px 26px -10px rgba(6,78,59,.38) !important;}
+.hero::after {content:""; position:absolute; right:-70px; bottom:-90px; width:260px; height:260px; border-radius:50%;
+  border:2px solid rgba(255,255,255,.18); box-shadow:0 0 0 38px rgba(255,255,255,.05);}
 .hero .hero-title {font-size:3.1rem !important; letter-spacing:-.025em;}
 .hero .eyebrow {color:#FDE68A !important; margin-top:2px;}
 .st-key-input_card {position:relative; z-index:2;}
@@ -265,13 +267,13 @@ header[data-testid="stHeader"]::before, header[data-testid="stHeader"]::after {d
 
 /* topic + keywords: border on the real <textarea>/<input> so it can never be overridden by wrappers */
 .st-key-input_card [data-testid="stTextArea"] div, .st-key-input_card [data-testid="stTextInput"] div {
-  border:none !important; box-shadow:none !important; background:transparent !important; overflow:visible !important;}
+  border:none !important; box-shadow:none !important; background:transparent !important; overflow:visible !important;}
 .st-key-input_card textarea, .st-key-input_card [data-testid="stTextInput"] input {
-  background:#FFFFFF !important; border:2px solid #0F766E !important; border-radius:12px !important;
-  padding:13px 16px !important; color:#052E2A !important; -webkit-text-fill-color:#052E2A !important;
-  font-size:1.05rem !important; font-weight:500 !important; box-shadow:0 2px 10px rgba(15,118,110,.12) !important;}
+  background:#FFFFFF !important; border:2px solid #0F766E !important; border-radius:12px !important;
+  padding:13px 16px !important; color:#052E2A !important; -webkit-text-fill-color:#052E2A !important;
+  font-size:1.05rem !important; font-weight:500 !important; box-shadow:0 2px 10px rgba(15,118,110,.12) !important;}
 .st-key-input_card textarea:focus, .st-key-input_card [data-testid="stTextInput"] input:focus {
-  border-color:#F97316 !important; outline:none !important; box-shadow:0 0 0 4px rgba(249,115,22,.20) !important;}
+  border-color:#F97316 !important; outline:none !important; box-shadow:0 0 0 4px rgba(249,115,22,.20) !important;}
 .st-key-input_card textarea::placeholder, .st-key-input_card input::placeholder {color:#527F75 !important; -webkit-text-fill-color:#527F75 !important; opacity:1 !important;}
 
 /* select all / clear: bolder text */
@@ -294,7 +296,7 @@ header[data-testid="stHeader"]::before, header[data-testid="stHeader"]::after {d
 .st-key-chip_tools [data-testid="stMarkdownContainer"], .st-key-chip_tools [data-testid="stMarkdownContainer"] p {margin:0 !important;}
 .st-key-chip_tools [data-testid="stElementContainer"], .st-key-chip_tools div.stButton, .st-key-chip_tools [data-testid="stButton"] {width:100% !important;}
 .st-key-chip_tools .count {display:inline-flex; align-items:center; white-space:nowrap; height:2.5rem; padding:0 16px; border-radius:999px; background:#E3F4EC;
-  border:1.5px solid #7FD8BE; color:#0B3B36 !important; font-size:.88rem; font-weight:800;}
+  border:1.5px solid #7FD8BE; color:#0B3B36 !important; font-size:.88rem; font-weight:800;}
 .st-key-sel_all button, .st-key-sel_none button {min-height:2.5rem !important; width:100% !important;}
 .divider {height:1px; background:#DDF0E8; margin:24px 0 20px;}
 
@@ -304,9 +306,9 @@ header[data-testid="stHeader"]::before, header[data-testid="stHeader"]::after {d
 .st-key-go_wrap button p {color:#FFFFFF !important; font-family:'Sora',sans-serif !important; font-size:1rem !important; font-weight:800 !important; letter-spacing:.02em; text-align:center; width:100%;}
 .st-key-go_wrap button:disabled {background:#9CA3AF !important; box-shadow:none !important;}
 @media (max-width:900px) {
-  .st-key-chip_tools [data-testid="stHorizontalBlock"] {grid-template-columns:1fr 1fr !important;}
-  .st-key-chip_tools [data-testid="stColumn"]:nth-child(4) {display:none !important;}
-  .st-key-chip_tools [data-testid="stColumn"]:nth-child(5) {grid-column:1 / -1;}
+  .st-key-chip_tools [data-testid="stHorizontalBlock"] {grid-template-columns:1fr 1fr !important;}
+  .st-key-chip_tools [data-testid="stColumn"]:nth-child(4) {display:none !important;}
+  .st-key-chip_tools [data-testid="stColumn"]:nth-child(5) {grid-column:1 / -1;}
 }
 
 /* download buttons + summary row aligned */
@@ -316,58 +318,345 @@ div.stDownloadButton > button p {font-weight:700 !important;}
 .hero .hero-tag {font-family:'Sora',sans-serif; font-size:1.35rem !important; font-weight:700; color:#FDE68A !important; margin:0 0 10px !important;}
 .hero .flow {display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:24px;}
 .hero .flow span {display:inline-flex; align-items:center; gap:9px; padding:8px 16px 8px 8px; border-radius:999px; background:rgba(255,255,255,.16);
-  border:1px solid rgba(255,255,255,.4); color:#FFFFFF !important; font-weight:700; font-size:.9rem;}
+  border:1px solid rgba(255,255,255,.4); color:#FFFFFF !important; font-weight:700; font-size:.9rem;}
 .hero .flow i {display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; background:#FDE68A; color:#064E3B;
-  font-style:normal; font-weight:800; font-size:.8rem;}
+  font-style:normal; font-weight:800; font-size:.8rem;}
 .hero .flow em {color:#FDE68A; font-style:normal; font-weight:800; font-size:1.1rem;}
-
-/* =================== FINAL POLISH 4: 3D two-tone brand + cleanup =================== */
-.w3a, .w3b {display:inline-block; font-family:'Sora',sans-serif; font-weight:800; letter-spacing:-.02em;}
-/* big hero title: white + gold, layered extrusion */
-.hero .hero-title .w3a {color:#FFFFFF !important;
-  text-shadow:1px 1px 0 #A7F3D0, 2px 2px 0 #5EEAD4, 3px 3px 0 #2DD4BF, 4px 4px 0 #14B8A6, 5px 5px 0 #0D9488, 6px 6px 0 #0F766E, 8px 12px 18px rgba(0,0,0,.35);}
-.hero .hero-title .w3b {color:#FDE68A !important;
-  text-shadow:1px 1px 0 #D97706, 2px 2px 0 #C2610A, 3px 3px 0 #B45309, 4px 4px 0 #A04A08, 5px 5px 0 #8A3F07, 6px 6px 0 #7C3506, 8px 12px 18px rgba(0,0,0,.35);}
-.hero .hero-title {margin-bottom:16px !important; line-height:1.1 !important;}
-/* sidebar brand: same effect, smaller */
-.brand .bname {font-size:1.45rem; line-height:1.1; white-space:nowrap;}
-.brand .w3a {color:#FFFFFF;
-  text-shadow:1px 1px 0 #5EEAD4, 2px 2px 0 #0D9488, 3px 3px 5px rgba(0,0,0,.4);}
-.brand .w3b {color:#FDE68A;
-  text-shadow:1px 1px 0 #D97706, 2px 2px 0 #92400E, 3px 3px 5px rgba(0,0,0,.4);}
-/* sidebar: same input size everywhere, less empty space at the top */
-section[data-testid="stSidebar"] div[data-testid="stTextInput"] input {font-size:.95rem !important; font-weight:600 !important; padding:.55rem .8rem !important; border:none !important; box-shadow:none !important;}
-section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {height:1.2rem !important; min-height:0 !important; padding:0 !important;}
-
-/* =================== FINAL POLISH 5: calm green/teal brand, clean title, no pill clutter =================== */
-/* title: Space Grotesk, white + mint, subtle depth only */
-.hero .hero-title, .brand .bname {font-family:'Space Grotesk','Sora',sans-serif !important;}
-.hero .hero-title {font-size:3.3rem !important; font-weight:700 !important; letter-spacing:-.01em !important; line-height:1.1 !important; margin:4px 0 12px !important;}
-.w3a, .w3b {font-family:'Space Grotesk','Sora',sans-serif !important; font-weight:700 !important; letter-spacing:-.01em !important;}
-.hero .hero-title .w3a {color:#FFFFFF !important; text-shadow:0 2px 0 rgba(4,40,34,.55), 0 6px 16px rgba(0,0,0,.25) !important;}
-.hero .hero-title .w3b {color:#A7F3D0 !important; text-shadow:0 2px 0 rgba(4,40,34,.55), 0 6px 16px rgba(0,0,0,.25) !important;}
-.brand .bname {font-size:1.4rem !important; font-weight:700;}
-.brand .w3a {color:#FFFFFF !important; text-shadow:0 1px 0 rgba(0,0,0,.35) !important;}
-.brand .w3b {color:#A7F3D0 !important; text-shadow:0 1px 0 rgba(0,0,0,.35) !important;}
-.brand .logo {background:linear-gradient(135deg,#A7F3D0,#2DD4BF) !important; color:#053B33 !important;}
-
-/* one green family: remove yellow/orange from hero + sidebar labels */
-.hero .eyebrow {color:#A7F3D0 !important;}
-.hero .hero-tag {color:#D1FAE5 !important; font-family:'Space Grotesk','Sora',sans-serif !important; font-weight:600 !important; font-size:1.3rem !important;}
-.side-h {color:#99F6E4 !important;}
-.hero {background:linear-gradient(120deg,#053B33 0%,#0B5D52 50%,#0F8F82 100%) !important;}
-
-/* hero feature line: plain text with thin dividers (no button look) */
-.hero .feat {display:flex; flex-wrap:wrap; margin-top:26px; padding-top:18px; border-top:1px solid rgba(255,255,255,.22);}
-.hero .feat span {color:#ECFDF5 !important; font-weight:600; font-size:.92rem; padding:0 16px; border-left:1px solid rgba(255,255,255,.28); line-height:1.2;}
-.hero .feat span:first-child {padding-left:0; border-left:none;}
-@media (max-width:820px) {.hero .feat span {padding:4px 12px 4px 0; border-left:none;}}
 """
 
 # every output gets its own colour theme (bg / text / accent) with strong contrast
 THEMES = {
-    "blog":      dict(bg="#DDF7E6", fg="#0B3B2C", ac="#16A34A"),   # fresh green
-    "linkedin":  dict(bg="#FFE4E6", fg="#4C0519", ac="#E11D48"),   # rose
-    "twitter":   dict(bg="#083D36", fg="#E6FFFA", ac="#FCD34D"),   # deep teal + amber
-    "seo":       dict(bg="#FEF6C7", fg="#134E4A", ac="#CA8A04"),   # sunny yellow
-    "factchec
+    "blog":      dict(bg="#DDF7E6", fg="#0B3B2C", ac="#16A34A"),   # fresh green
+    "linkedin":  dict(bg="#FFE4E6", fg="#4C0519", ac="#E11D48"),   # rose
+    "twitter":   dict(bg="#083D36", fg="#E6FFFA", ac="#FCD34D"),   # deep teal + amber
+    "seo":       dict(bg="#FEF6C7", fg="#134E4A", ac="#CA8A04"),   # sunny yellow
+    "factcheck": dict(bg="#FFE8D1", fg="#123E38", ac="#EA580C"),   # orange
+    "research":  dict(bg="#CCF5EE", fg="#0C3B36", ac="#0D9488"),   # aqua
+}
+
+
+def theme_css() -> str:
+    css = ""
+    for k, t in THEMES.items():
+        s = f".st-key-card_{k}"
+        css += (
+            f"{s}{{background:{t['bg']};border:1px solid {t['ac']}44;border-left:6px solid {t['ac']};"
+            f"border-radius:16px;padding:26px 32px;font-size:1.04rem;line-height:1.75;}}"
+            f"{s} p,{s} li{{font-size:1.04rem;line-height:1.75;font-weight:500;}}"
+            f"{s} h1,{s} h2,{s} h3,{s} h4{{font-weight:800;}}"
+            f"{s} p,{s} li,{s} td,{s} th,{s} span,{s} blockquote,{s} strong,{s} em{{color:{t['fg']} !important;}}"
+            f"{s} h1,{s} h2,{s} h3,{s} h4{{color:{t['fg']} !important;}}{s} a{{color:{t['fg']} !important;text-decoration:underline;font-weight:700;}}{s} h2{{border-bottom:2px solid {t['ac']};padding-bottom:4px;}}"
+        )
+    return css
+
+
+st.markdown(f"<style>{BASE_CSS}{theme_css()}</style>", unsafe_allow_html=True)
+
+# ------------------------------------------------------------------ state
+st.session_state.setdefault("history", [])
+st.session_state.setdefault("result", None)
+st.session_state.setdefault("topic", "")
+for _k, _ in OUTPUTS:
+    st.session_state.setdefault(f"sel_{_k}", False)
+
+
+def get_api_key() -> str:
+    """Key is read from Streamlit secrets or environment only - it is never shown in the UI."""
+    try:
+        v = st.secrets.get("GEMINI_API_KEY", "")
+        if v:
+            return v
+    except Exception:
+        pass
+    return os.getenv("GEMINI_API_KEY", "")
+
+
+API_KEY = get_api_key()
+
+
+def toggle(k: str):
+    st.session_state[f"sel_{k}"] = not st.session_state[f"sel_{k}"]
+
+
+def set_all(value: bool):
+    for k, _ in OUTPUTS:
+        st.session_state[f"sel_{k}"] = value
+
+
+# ---------------------------------------------------------------- sidebar
+with st.sidebar:
+    st.markdown('<div class="brand"><span class="logo">W</span>Writify Studio</div><div class="brand-sub">Research. Write. Verify.</div>',
+                unsafe_allow_html=True)
+    st.markdown('<div class="side-h">Model</div>', unsafe_allow_html=True)
+    model_label = st.selectbox("AI model", list(MODELS.keys()), label_visibility="collapsed")
+
+    st.markdown('<div class="side-h">Writing preferences</div>', unsafe_allow_html=True)
+    language = st.selectbox("Output language", LANGUAGES)
+    if language == CUSTOM_LANG:
+        language = st.text_input("Type any language", placeholder="e.g. Arabic, Punjabi, Spanish, French").strip()
+    if language == CUSTOM_LANG:
+        language = st.text_input("Type any language", placeholder="e.g. French, Arabic, Punjabi, Spanish").strip() or "English"
+    tone = st.selectbox("Tone of voice", TONES)
+    length = st.selectbox("Blog length", list(LENGTHS.keys()), index=1)
+    audience = st.text_input("Target audience", "Students and young professionals")
+
+    st.markdown('<div class="side-h">Connection</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="status"><span class="dot {"ok" if API_KEY else "bad"}"></span>'
+        f'{"Gemini connected" if API_KEY else "Not configured"}</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="side-h">Recent runs</div>', unsafe_allow_html=True)
+    if not st.session_state.history:
+        st.markdown('<div class="side-note">No runs yet.</div>', unsafe_allow_html=True)
+    for i, h in enumerate(reversed(st.session_state.history[-6:])):
+        if st.button(f"{h['time']}  |  {h['topic'][:26]}", key=f"hist_{i}"):
+            st.session_state.result = h
+            st.rerun()
+    if st.session_state.history and st.button("Clear history", key="clear_hist"):
+        st.session_state.history, st.session_state.result = [], None
+        st.rerun()
+
+# ------------------------------------------------------------------- hero
+st.markdown(
+    """
+<div class="hero">
+  <div class="eyebrow">&#9679; Multi-agent content studio</div>
+  <div class="hero-title">Writify Studio</div>
+  <p class="hero-tag">One topic in. A fact-checked content package out.</p>
+  <p>A crew of AI agents researches the web, writes the content, optimises it for search
+  and verifies every claim, so you can publish with confidence.</p>
+  <div class="flow"><span><i>1</i>Research</span><em>&rarr;</em><span><i>2</i>Write</span><em>&rarr;</em>
+  <span><i>3</i>Edit for SEO</span><em>&rarr;</em><span><i>4</i>Fact-check</span></div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+if not API_KEY:
+    st.warning("The Gemini API key is not configured. Add GEMINI_API_KEY to your .env file or to the Streamlit "
+               "secrets, then restart the app.")
+
+# ------------------------------------------------------------------ input
+EXAMPLES = ["AI agents in healthcare", "Remote work productivity", "Beginner's guide to investing"]
+
+with st.container(key="input_card"):
+    st.markdown('<div class="section-title">Topic</div>', unsafe_allow_html=True)
+    st.text_area("Topic", key="topic", height=92, label_visibility="collapsed",
+                 placeholder="Describe what you want to publish, e.g. How small businesses can use AI to save time")
+    st.markdown('<div class="hint" style="margin:10px 0 6px">Try an example:</div>', unsafe_allow_html=True)
+    with st.container(key="examples"):
+        ex_cols = st.columns(len(EXAMPLES))
+        for col, ex in zip(ex_cols, EXAMPLES):
+            col.button(ex, key=f"ex_{ex}", on_click=lambda e=ex: st.session_state.update(topic=e))
+    keywords = st.text_input("Focus keywords (optional)", placeholder="ai, automation, productivity")
+
+    st.markdown('<div class="divider"></div><div class="section-title">Deliverables</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hint-row"><span class="hint">Choose one or several outputs.</span>'
+                '<span class="badge">Only selected outputs are delivered</span></div>', unsafe_allow_html=True)
+    with st.container(key="chips"):
+        cols = st.columns(len(OUTPUTS))
+        for col, (k, label) in zip(cols, OUTPUTS):
+            on = st.session_state[f"sel_{k}"]
+            col.button(label, key=f"chip_{k}", type="primary" if on else "secondary",
+                       on_click=toggle, args=(k,))
+    selected = {k for k, _ in OUTPUTS if st.session_state.get(f"sel_{k}")}
+    if "seo" in selected and "blog" not in selected:
+        st.markdown('<div class="subnote">SEO editing works on a blog draft written in the background. The blog itself is shown only if you select Blog post.</div>',
+                    unsafe_allow_html=True)
+    with st.container(key="chip_tools"):
+        b1, b2, b3, _sp, b5 = st.columns(5)
+        b1.button("Select all", key="sel_all", on_click=set_all, args=(True,))
+        b2.button("Clear", key="sel_none", on_click=set_all, args=(False,))
+        b3.markdown(f'<div class="count">{len(selected)} of {len(OUTPUTS)} selected</div>', unsafe_allow_html=True)
+        with b5:
+            with st.container(key="go_wrap"):
+                go = st.button("Generate content", type="primary", key="go", disabled=not API_KEY)
+
+
+# --------------------------------------------------------------- pipeline
+def pipeline_html(labels, done, active):
+    h = '<div class="pipe">'
+    for i, (_k, name) in enumerate(labels):
+        cls = "done" if i < done else ("active" if i == active else "wait")
+        state = "Completed" if i < done else ("In progress" if i == active else "Queued")
+        h += f'<div class="step {cls}"><b>{name}</b>{state}</div>'
+    return h + "</div>"
+
+
+def visible_pipeline(steps, selected, n_done):
+    """Show only the agents the user selected; background helpers (research / blog draft) stay hidden."""
+    vis = [(i, st_) for i, st_ in enumerate(steps) if st_[0] in selected]
+    labels = [v[1] for v in vis]
+    done = sum(1 for i, _ in vis if i < n_done)
+    active = next((j for j, (i, _) in enumerate(vis) if i >= n_done), -1)
+    return pipeline_html(labels, done, active)
+
+
+if go:
+    topic = st.session_state.topic.strip()
+    if len(topic) < 5:
+        st.warning("Please describe the topic in a little more detail.")
+    elif not language:
+        st.warning("Please type the language you want in the sidebar (Output language > Custom language).")
+    elif not selected:
+        st.warning("Select at least one deliverable.")
+    else:
+        all_steps = plan_steps(selected)
+        # a blog drafted only for SEO is a background step: it runs but is not shown
+        steps = [st_ for st_ in all_steps if st_[0] != "blog" or "blog" in selected]
+        holder = st.empty()
+        state = {"raw": 0, "done": 0}
+        holder.markdown(pipeline_html(steps, 0, 0), unsafe_allow_html=True)
+
+        def on_done(_o):
+            key = all_steps[state["raw"]][0] if state["raw"] < len(all_steps) else None
+            state["raw"] += 1
+            if key != "blog" or "blog" in selected:
+                state["done"] += 1
+            holder.markdown(pipeline_html(steps, state["done"], state["done"]), unsafe_allow_html=True)
+
+        cfg = dict(topic=topic, audience=audience, tone=tone, language=language, length=length,
+                   keywords=keywords, outputs=selected)
+        start = time.time()
+        try:
+            with st.spinner("The agents are working. This can take a few minutes on the free tier."):
+                order = [MODELS[model_label]] + [m for m in MODELS.values() if m != MODELS[model_label]]
+                out = None
+                for n, mdl in enumerate(order):
+                    state["done"] = 0
+                    state["raw"] = 0
+                    holder.markdown(visible_pipeline(steps, selected, 0), unsafe_allow_html=True)
+                    try:
+                        out = run_studio(cfg, mdl, API_KEY, on_done)
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        retry = any(x in str(e) for x in ("503", "UNAVAILABLE", "high demand", "429", "404", "NOT_FOUND"))
+                        if retry and n < len(order) - 1:
+                            st.toast("Model unavailable or busy. Trying the next model.")
+                            time.sleep(8)
+                            continue
+                        raise
+            out.update(topic=topic, time=dt.datetime.now().strftime("%H:%M"),
+                       seconds=int(time.time() - start), agents=len(all_steps), keywords=keywords)
+            st.session_state.result = out
+            st.session_state.history.append(out)
+            holder.markdown(visible_pipeline(steps, selected, len(steps)), unsafe_allow_html=True)
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            if "503" in msg or "UNAVAILABLE" in msg or "high demand" in msg:
+                st.error("Gemini servers are busy right now. Please wait a minute or two and try again.")
+            elif "404" in msg or "NOT_FOUND" in msg:
+                st.error("This model is no longer available. Update the MODELS list in crew_setup.py.")
+            elif "429" in msg or "quota" in msg.lower() or "rate limit" in msg.lower():
+                st.error("The Gemini free-tier limit was reached. Wait a minute, or choose a Flash-Lite model.")
+            elif "API key" in msg or "401" in msg or "403" in msg or "invalid" in msg.lower():
+                st.error("The configured API key was rejected. Check the key in your .env file or secrets.")
+            else:
+                st.error("Something went wrong. Please try again.")
+            with st.expander("Technical details"):
+                st.code(msg)
+
+
+# ------------------------------------------------------- research extras
+def google_links(topic: str, keywords: str):
+    year = dt.date.today().year
+    g = "https://www.google.com/search?q="
+    links = [
+        ("Overview", g + quote_plus(topic)),
+        ("Statistics and data", g + quote_plus(f"{topic} statistics")),
+        (f"Trends {year}", g + quote_plus(f"{topic} trends {year}")),
+        ("Latest news", "https://www.google.com/search?tbm=nws&q=" + quote_plus(topic)),
+        ("Research papers", "https://scholar.google.com/scholar?q=" + quote_plus(topic)),
+    ]
+    for kw in [k.strip() for k in (keywords or "").split(",") if k.strip()][:3]:
+        links.append((f"Keyword: {kw}", g + quote_plus(f"{topic} {kw}")))
+    return links
+
+
+def research_extras(res: dict):
+    chips = "".join(
+        f'<a class="linkchip" href="{html.escape(u, quote=True)}" target="_blank" rel="noopener noreferrer">{html.escape(t)}</a>'
+        for t, u in google_links(res["topic"], res.get("keywords", "")))
+    st.markdown(f'<div class="srcbox"><div class="srcbox-title">Explore this topic on Google</div>'
+                f'<div class="chiprow">{chips}</div></div>', unsafe_allow_html=True)
+    srcs = res.get("sources") or []
+    if srcs:
+        items = ""
+        for sc in srcs[:15]:
+            dom = urlparse(sc["url"]).netloc.replace("www.", "")
+            items += (f'<li><a href="{html.escape(sc["url"], quote=True)}" target="_blank" rel="noopener noreferrer">'
+                      f'{html.escape(sc["title"][:110])}</a><span>{html.escape(dom)}</span></li>')
+        body = f'<ol class="srclist">{items}</ol>'
+    else:
+        body = '<div class="hint">No live sources were captured for this run.</div>'
+    st.markdown(f'<div class="srcbox"><div class="srcbox-title">Sources used by the research agent</div>{body}</div>',
+                unsafe_allow_html=True)
+
+
+def export_text(res: dict, key: str) -> str:
+    text = res[key]
+    if key == "research" and res.get("sources"):
+        text += "\n\n## Sources\n" + "\n".join(f"- [{x['title']}]({x['url']})" for x in res["sources"])
+    return text
+
+
+def stat_strip(label: str, key: str, res: dict):
+    """Four stats computed from the text of THIS tab only."""
+    text = res[key]
+    words = len(text.split())
+    chars = len(text)
+    mins = max(1, round(words / 200))
+    if key == "blog":
+        extra = (str(len(re.findall(r"^#{1,6}\s", text, re.M))), "Headings")
+    elif key == "linkedin":
+        extra = (str(len(re.findall(r"(?<!\w)#\w+", text))), "Hashtags")
+    elif key == "twitter":
+        extra = (str(len(re.findall(r"^\s*\**\d+\s*/", text, re.M))), "Tweets")
+    elif key == "factcheck":
+        m = re.search(r"(\d+(?:\.\d+)?)\s*/\s*10", text)
+        extra = (f"{m.group(1)}/10" if m else "-", "Reliability score")
+    elif key == "research":
+        extra = (str(len(res.get("sources") or [])), "Sources found")
+    else:  # seo
+        extra = (str(len(re.findall(r"^\s*(?:[-*]|\d+\.)\s", text, re.M))), "Checklist items")
+    cells = [(f"{words:,}", "Words"), (f"{chars:,}", "Characters"), (f"{mins} min", "Reading time"), extra]
+    ac = THEMES[key]["ac"]
+    inner = "".join(f'<div class="cell"><div class="v">{v}</div><div class="l">{l}</div></div>' for v, l in cells)
+    st.markdown(f'<div class="statstrip" style="--ac:{ac}">{inner}</div>', unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------- results
+res = st.session_state.result
+if res:
+    st.markdown(f'<div class="result-head">Results <span>{html.escape(res["topic"])}</span></div>',
+                unsafe_allow_html=True)
+    TAB_ORDER = [("Blog", "blog"), ("LinkedIn", "linkedin"), ("Twitter/X", "twitter"),
+                 ("SEO", "seo"), ("Fact-check", "factcheck"), ("Research", "research")]
+    sections = [(lbl, k) for lbl, k in TAB_ORDER if res.get(k)]
+
+    st.markdown(
+        f'<div class="runbar"><span><b>{len(sections)}</b> deliverable{"s" if len(sections) != 1 else ""}</span>'
+        f'<span><b>{res["agents"]}</b> agents run</span><span><b>{res["seconds"]}s</b> total time</span></div>',
+        unsafe_allow_html=True)
+
+    tabs = st.tabs([s[0] for s in sections]) if sections else []
+    for tab, (label, key) in zip(tabs, sections):
+        with tab:
+            stat_strip(label, key, res)
+            with st.container(key=f"card_{key}"):
+                st.markdown(res[key])
+            if key == "research":
+                research_extras(res)
+            c1, c2 = st.columns([1, 3])
+            c1.download_button("Download (.md)", export_text(res, key), file_name=f"{key}.md", key=f"dl_{key}")
+            with st.expander("Copy raw text"):
+                st.code(export_text(res, key), language=None)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for _lbl, key in sections:
+            z.writestr(f"{key}.md", export_text(res, key))
+    st.download_button("Download full package (.zip)", buf.getvalue(), file_name="content_package.zip",
+                       mime="application/zip", type="primary", key="dl_zip")
+else:
+    st.markdown('<div class="note">Enter a topic, choose your deliverables and select Generate content.</div>', unsafe_allow_html=True)
