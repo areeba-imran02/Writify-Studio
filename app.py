@@ -30,7 +30,7 @@ st.set_page_config(page_title="Writify Studio | Research. Write. Verify.", page_
 
 # ------------------------------------------------------------------ theme
 BASE_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Manrope:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Sora:wght@500;600;700;800&family=Manrope:wght@400;500;600;700&display=swap');
 
 .stApp {background: linear-gradient(160deg,#E6FAF1 0%,#FFF9E6 55%,#FFEBDD 100%) !important; color:#0F3D36 !important;}
 header[data-testid="stHeader"] {background: rgba(230,250,241,.85) !important; backdrop-filter: blur(6px);}
@@ -71,7 +71,7 @@ section[data-testid="stSidebar"] button p {color:#ECFDF5 !important; font-size:.
 
 /* ---------- hero ---------- */
 .hero {position:relative; overflow:hidden; border-radius:22px; padding:38px 42px; margin-bottom:22px;
-  background: radial-gradient(700px 280px at 92% -10%, rgba(251,146,60,.55), transparent 62%),
+  background: radial-gradient(640px 300px at 92% -10%, rgba(94,234,212,.45), transparent 65%),
               linear-gradient(120deg,#064E3B 0%,#0F766E 52%,#14B8A6 100%);
   box-shadow:0 18px 40px rgba(6,78,59,.28);}
 .hero .eyebrow {color:#FDE68A; font-size:.78rem; font-weight:700; letter-spacing:.16em; text-transform:uppercase;}
@@ -258,8 +258,6 @@ section[data-testid="stSidebar"] button p {color:#FFFFFF !important; font-weight
 /* =================== FINAL POLISH 2 =================== */
 /* hero shadow was bleeding over the input card (fade at top of card) */
 .hero {padding:44px 46px !important; margin-bottom:34px !important; box-shadow:0 14px 26px -10px rgba(6,78,59,.38) !important;}
-.hero::after {content:""; position:absolute; right:-70px; bottom:-90px; width:260px; height:260px; border-radius:50%;
-  border:2px solid rgba(255,255,255,.18); box-shadow:0 0 0 38px rgba(255,255,255,.05);}
 .hero .hero-title {font-size:3.1rem !important; letter-spacing:-.025em;}
 .hero .eyebrow {color:#FDE68A !important; margin-top:2px;}
 .st-key-input_card {position:relative; z-index:2;}
@@ -322,6 +320,48 @@ div.stDownloadButton > button p {font-weight:700 !important;}
 .hero .flow i {display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; background:#FDE68A; color:#064E3B;
   font-style:normal; font-weight:800; font-size:.8rem;}
 .hero .flow em {color:#FDE68A; font-style:normal; font-weight:800; font-size:1.1rem;}
+
+/* =================== FINAL POLISH 4: 3D two-tone brand + cleanup =================== */
+.w3a, .w3b {display:inline-block; font-family:'Sora',sans-serif; font-weight:800; letter-spacing:-.02em;}
+/* big hero title: white + gold, layered extrusion */
+.hero .hero-title .w3a {color:#FFFFFF !important;
+  text-shadow:1px 1px 0 #A7F3D0, 2px 2px 0 #5EEAD4, 3px 3px 0 #2DD4BF, 4px 4px 0 #14B8A6, 5px 5px 0 #0D9488, 6px 6px 0 #0F766E, 8px 12px 18px rgba(0,0,0,.35);}
+.hero .hero-title .w3b {color:#FDE68A !important;
+  text-shadow:1px 1px 0 #D97706, 2px 2px 0 #C2610A, 3px 3px 0 #B45309, 4px 4px 0 #A04A08, 5px 5px 0 #8A3F07, 6px 6px 0 #7C3506, 8px 12px 18px rgba(0,0,0,.35);}
+.hero .hero-title {margin-bottom:16px !important; line-height:1.1 !important;}
+/* sidebar brand: same effect, smaller */
+.brand .bname {font-size:1.45rem; line-height:1.1; white-space:nowrap;}
+.brand .w3a {color:#FFFFFF;
+  text-shadow:1px 1px 0 #5EEAD4, 2px 2px 0 #0D9488, 3px 3px 5px rgba(0,0,0,.4);}
+.brand .w3b {color:#FDE68A;
+  text-shadow:1px 1px 0 #D97706, 2px 2px 0 #92400E, 3px 3px 5px rgba(0,0,0,.4);}
+/* sidebar: same input size everywhere, less empty space at the top */
+section[data-testid="stSidebar"] div[data-testid="stTextInput"] input {font-size:.95rem !important; font-weight:600 !important; padding:.55rem .8rem !important; border:none !important; box-shadow:none !important;}
+section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {height:1.2rem !important; min-height:0 !important; padding:0 !important;}
+
+/* =================== FINAL POLISH 5: calm green/teal brand, clean title, no pill clutter =================== */
+/* title: Space Grotesk, white + mint, subtle depth only */
+.hero .hero-title, .brand .bname {font-family:'Space Grotesk','Sora',sans-serif !important;}
+.hero .hero-title {font-size:3.3rem !important; font-weight:700 !important; letter-spacing:-.01em !important; line-height:1.1 !important; margin:4px 0 12px !important;}
+.w3a, .w3b {font-family:'Space Grotesk','Sora',sans-serif !important; font-weight:700 !important; letter-spacing:-.01em !important;}
+.hero .hero-title .w3a {color:#FFFFFF !important; text-shadow:0 2px 0 rgba(4,40,34,.55), 0 6px 16px rgba(0,0,0,.25) !important;}
+.hero .hero-title .w3b {color:#A7F3D0 !important; text-shadow:0 2px 0 rgba(4,40,34,.55), 0 6px 16px rgba(0,0,0,.25) !important;}
+.brand .bname {font-size:1.4rem !important; font-weight:700;}
+.brand .w3a {color:#FFFFFF !important; text-shadow:0 1px 0 rgba(0,0,0,.35) !important;}
+.brand .w3b {color:#A7F3D0 !important; text-shadow:0 1px 0 rgba(0,0,0,.35) !important;}
+.brand .logo {background:linear-gradient(135deg,#A7F3D0,#2DD4BF) !important; color:#053B33 !important;}
+
+/* one green family: remove yellow/orange from hero + sidebar labels */
+.hero .eyebrow {color:#A7F3D0 !important;}
+.hero .hero-tag {color:#D1FAE5 !important; font-family:'Space Grotesk','Sora',sans-serif !important; font-weight:600 !important; font-size:1.3rem !important;}
+.side-h {color:#99F6E4 !important;}
+.hero {background:linear-gradient(120deg,#053B33 0%,#0B5D52 50%,#0F8F82 100%) !important;}
+
+/* hero feature line: plain text with thin dividers (no button look) */
+.hero .feat {display:flex; flex-wrap:wrap; margin-top:26px; padding-top:18px; border-top:1px solid rgba(255,255,255,.22);}
+.hero .feat span {color:#ECFDF5 !important; font-weight:600; font-size:.92rem; padding:0 16px; border-left:1px solid rgba(255,255,255,.28); line-height:1.2;}
+.hero .feat span:first-child {padding-left:0; border-left:none;}
+@media (max-width:820px) {.hero .feat span {padding:4px 12px 4px 0; border-left:none;}}
 """
 
 # every output gets its own colour theme (bg / text / accent) with strong contrast
@@ -385,7 +425,7 @@ def set_all(value: bool):
 
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
-    st.markdown('<div class="brand"><span class="logo">W</span>Writify Studio</div><div class="brand-sub">Research. Write. Verify.</div>',
+    st.markdown('<div class="brand"><span class="logo">W</span><span class="bname"><span class="w3a">Writify</span> <span class="w3b">Studio</span></span></div><div class="brand-sub">Research. Write. Verify.</div>',
                 unsafe_allow_html=True)
     st.markdown('<div class="side-h">Model</div>', unsafe_allow_html=True)
     model_label = st.selectbox("AI model", list(MODELS.keys()), label_visibility="collapsed")
@@ -421,12 +461,11 @@ st.markdown(
     """
 <div class="hero">
   <div class="eyebrow">&#9679; Multi-agent content studio</div>
-  <div class="hero-title">Writify Studio</div>
+  <div class="hero-title"><span class="w3a">Writify</span> <span class="w3b">Studio</span></div>
   <p class="hero-tag">One topic in. A fact-checked content package out.</p>
   <p>A crew of AI agents researches the web, writes the content, optimises it for search
   and verifies every claim, so you can publish with confidence.</p>
-  <div class="flow"><span><i>1</i>Research</span><em>&rarr;</em><span><i>2</i>Write</span><em>&rarr;</em>
-  <span><i>3</i>Edit for SEO</span><em>&rarr;</em><span><i>4</i>Fact-check</span></div>
+  <div class="feat"><span>Research report</span><span>Blog post</span><span>LinkedIn post</span><span>Twitter/X thread</span><span>SEO report</span><span>Fact-check</span></div>
 </div>
 """,
     unsafe_allow_html=True,
