@@ -6,6 +6,7 @@ Speed notes:
 - short network timeout + quick retry so one slow search cannot stall the whole run
 """
 
+import re
 import time
 
 from crewai.tools import tool
@@ -61,16 +62,41 @@ def _cached(kind: str, query: str, fn):
     return res
 
 
-def make_search_tools(sources: list):
-    """Create the search tools for ONE run. Every result URL is appended to `sources` (deduplicated)."""
+_STOP = {"the", "and", "for", "with", "how", "what", "why", "are", "from", "that", "this", "your", "can",
+         "best", "guide", "about", "into", "using", "use"}
+
+
+def _topic_tokens(topic: str) -> list:
+    words = re.findall(r"\w+", (topic or "").lower())
+    return [w[:6] for w in words if len(w) >= 3 and w not in _STOP]
+
+
+def _relevant(results, tokens):
+    """Code-level topic filter: drop search results that do not mention the topic at all."""
+    if not tokens:
+        return results
+    need = max(1, len(tokens) // 2)
+    keep = []
+    for r in results:
+        text = ((r.get("title") or "") + " " + (r.get("body") or "")).lower()
+        if sum(1 for tk in tokens if tk in text) >= need:
+            keep.append(r)
+    return keep
+
+
+def make_search_tools(sources: list, topic: str = ""):
+    """Create the search tools for ONE run. Every result URL is appended to `sources` (deduplicated).
+    Results that are not about `topic` are filtered out in code."""
     seen = set()
+    tokens = _topic_tokens(topic)
 
     def _log(query, results):
         for r in results or []:
             url = r.get("href") or r.get("url") or ""
             if url and url not in seen:
                 seen.add(url)
-                sources.append({"title": (r.get("title") or url).strip(), "url": url, "query": query})
+                sources.append({"title": (r.get("title") or url).strip(), "url": url, "query": query,
+                                "body": (r.get("body") or "").strip()})
 
     @tool("DuckDuckGo Web Search")
     def web_search(query: str) -> str:
@@ -80,6 +106,9 @@ def make_search_tools(sources: list):
         res = _cached("web", query, lambda: list(DDGS(timeout=SEARCH_TIMEOUT).text(query, max_results=MAX_RESULTS)))
         if isinstance(res, str):
             return res
+        res = _relevant(res, tokens)
+        if not res:
+            return "No relevant results about the topic. Try a simpler query that includes the main topic words."
         _log(query, res)
         return _format(res)
 
@@ -91,6 +120,9 @@ def make_search_tools(sources: list):
         res = _cached("news", query, lambda: list(DDGS(timeout=SEARCH_TIMEOUT).news(query, max_results=MAX_RESULTS)))
         if isinstance(res, str):
             return res
+        res = _relevant(res, tokens)
+        if not res:
+            return "No relevant results about the topic. Try a simpler query that includes the main topic words."
         _log(query, res)
         return _format(res)
 
