@@ -3,6 +3,8 @@
 from crewai import Agent, Crew, LLM, Process, Task
 
 import datetime as dt
+import re
+import time
 
 import guard
 from tools import prefetch_evidence
@@ -13,6 +15,10 @@ MODELS = {
     "Gemini 3.8 Flash (recommended)": "gemini/gemini-3.8-flash",
     "Gemini 3.5 Flash-Lite (fast)": "gemini/gemini-3.5-flash-lite",
     "Gemini 3.1 Flash-Lite (fast)": "gemini/gemini-3.1-flash-lite",
+    # Backups: every model has its OWN free daily quota, so more models = more free runs per day.
+    # (If one is not available on your key the app simply skips to the next model.)
+    "Gemini 2.5 Flash-Lite (backup)": "gemini/gemini-2.5-flash-lite",
+    "Gemini 2.5 Flash (backup)": "gemini/gemini-2.5-flash",
 }
 LENGTHS = {"Short (~500 words)": 500, "Medium (~900 words)": 900, "Long (~1500 words)": 1500}
 CUSTOM_LANG = "Custom language..."
@@ -36,6 +42,8 @@ GEN_WRITER = dict(temperature=0.4, top_p=0.85, top_k=30)   # blog / social / SEO
 USE_TOP_K = True           # set False if your CrewAI/Gemini setup rejects top_k
 REASONING_EFFORT = "low"   # less "thinking" time = much faster. Set None to disable.
 PARALLEL_WRITERS = True    # blog / LinkedIn / Twitter run at the same time (faster)
+LEAN_MODE = True           # blog+LinkedIn+Twitter+SEO written in ONE request (saves free quota)
+RESULT_CACHE_SECONDS = 3600  # same inputs within 1 hour = instant, 0 requests
 MAX_RPM = 10               # free-tier friendly request limit (was 8)
 
 
@@ -67,6 +75,15 @@ def plan_steps(selected) -> list:
         if key in s:
             steps.append((key, name))
     return steps
+
+
+def _split_parts(raw: str) -> dict:
+    """Split the lean-mode answer on its ===== MARKER ===== lines."""
+    pieces = re.split(r"^\s*=====([A-Z_]+)=====\s*$", raw or "", flags=re.M)
+    return {pieces[i]: pieces[i + 1].strip() for i in range(1, len(pieces) - 1, 2)}
+
+
+_RESULT_CACHE: dict = {}
 
 
 def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = False) -> dict:
@@ -106,6 +123,8 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
         async_keys = set(content_keys if later_sync else content_keys[:-1])
 
     agents, tasks = [], []
+    lean = LEAN_MODE and bool(sel & {"blog", "linkedin", "twitter", "seo"})
+    studio_t = None
 
     researcher = Agent(
         role="Senior Research Analyst",
@@ -140,8 +159,47 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
     tasks.append(research_t)
 
     blog_t = li_t = tw_t = seo_t = check_t = None
+    # ---- LEAN MODE: all writing deliverables in ONE request ----
+    if lean:
+        want = [k for k in ("blog", "linkedin", "twitter", "seo") if k in sel]
+        tok = (blog_tokens if "blog" in sel else 0) + (1200 if "linkedin" in sel else 0) \
+            + (1200 if "twitter" in sel else 0) + (900 if "seo" in sel else 0)
+        llm_studio = build_llm(model, api_key, GEN_WRITER, min(8192, max(2048, tok)), safe)
+        spec = []
+        if "blog" in sel:
+            seo_hint = (" Make it SEO-optimised: keyword-rich title and headings, keywords placed naturally "
+                        "(no stuffing), strong intro." if "seo" in sel else "")
+            spec.append(f"=====BLOG=====\nA blog post for {audience}, tone: {tone}, about {words} words. "
+                        f"Strong title, hook intro, H2/H3 sections, short paragraphs, conclusion with a CTA. "
+                        f"Naturally include these keywords: {keywords}.{seo_hint}")
+        if "linkedin" in sel:
+            spec.append("=====LINKEDIN=====\nONE LinkedIn post (150-250 words): strong hook, short lines, "
+                        "3-5 hashtags, call-to-action.")
+        if "twitter" in sel:
+            spec.append("=====TWITTER=====\nA Twitter/X thread of 6-8 tweets numbered 1/, 2/ ... Every tweet under "
+                        "280 characters, first = hook, last = takeaway + CTA, max 2 hashtags overall.")
+        if "seo" in sel:
+            spec.append("=====SEO=====\nSEO metadata: SEO title (<=60 chars), meta description (<=155 chars), "
+                        "URL slug, primary keyword, 5 secondary keywords, short list of internal-link and "
+                        "image-alt suggestions.")
+        studio = Agent(
+            role="Content Studio Writer",
+            goal="Write every requested deliverable accurately from the research notes only.",
+            backstory="You are an expert multi-format writer (blog, LinkedIn, Twitter/X, SEO). You never add facts "
+                      "that are not in the research notes.",
+            llm=llm_studio, max_iter=3, **common)
+        studio_t = Task(
+            description=(
+                f"Using ONLY the research notes, write these deliverables about '{topic}'. Tone: {tone}. "
+                "Output each one under its marker line, exactly as shown, in this order, with no extra text:\n\n"
+                + "\n\n".join(spec) + f"\n\n{lang_rule}{lock}"),
+            expected_output="The requested sections, each starting with its ===== marker line.",
+            agent=studio, context=[research_t])
+        agents.append(studio)
+        tasks.append(studio_t)
 
-    if "blog" in sel:
+
+    if "blog" in sel and not lean:
         blogger = Agent(
             role="Expert Blog Writer",
             goal="Write an engaging, well-structured, original blog post based strictly on the research notes.",
@@ -161,7 +219,7 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
         tasks.append(blog_t)
 
     # LinkedIn / Twitter only need the research, so they can run in parallel with the blog
-    if "linkedin" in sel:
+    if "linkedin" in sel and not lean:
         a = Agent(
             role="LinkedIn Content Strategist",
             goal="Create a high-performing LinkedIn post that matches the facts.",
@@ -178,7 +236,7 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
         agents.append(a)
         tasks.append(li_t)
 
-    if "twitter" in sel:
+    if "twitter" in sel and not lean:
         a = Agent(
             role="Twitter/X Thread Writer",
             goal="Create a punchy Twitter/X thread that matches the facts.",
@@ -196,7 +254,7 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
         agents.append(a)
         tasks.append(tw_t)
 
-    if "seo" in sel:
+    if "seo" in sel and not lean:
         a = Agent(
             role="SEO Editor",
             goal="Polish the blog for readability and search ranking without changing the facts.",
@@ -223,7 +281,7 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
             backstory="You are a skeptical fact-checker. You flag unsupported, outdated or exaggerated claims "
                       "and never rubber-stamp content. If something is wrong you say so plainly.",
             llm=llm_check, max_iter=3, **common)
-        ctx = [research_t] + [t for t in (seo_t or blog_t, li_t, tw_t) if t is not None]
+        ctx = [research_t] + [t for t in (studio_t, seo_t or blog_t, li_t, tw_t) if t is not None]
         check_t = Task(
             description=(
                 "Fact-check the generated content against the research notes. List the 5-8 most important "
@@ -237,8 +295,21 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
         agents.append(a)
         tasks.append(check_t)
 
+    cb = on_task_done
+    if lean and on_task_done:  # one finished request covers several steps in the progress bar
+        covers = [1, len([k for k in ("blog", "linkedin", "twitter", "seo") if k in sel])]
+        if "factcheck" in sel:
+            covers.append(1)
+        counter = {"i": 0}
+
+        def cb(o):
+            n = covers[counter["i"]] if counter["i"] < len(covers) else 1
+            counter["i"] += 1
+            for _ in range(n):
+                on_task_done(o)
+
     crew = Crew(agents=agents, tasks=tasks, process=Process.sequential, verbose=False,
-                memory=False, max_rpm=MAX_RPM, task_callback=on_task_done)
+                memory=False, max_rpm=MAX_RPM, task_callback=cb)
     crew.kickoff()
 
     # ------------------------------------------------------------------
@@ -259,21 +330,30 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
     def writer(task, label, drop=True):
         return guard.clean_numbers(urls(task.output.raw), support, notes, drop, label) if task else ""
 
-    li_raw = writer(li_t, "LinkedIn")
-    tw_raw = writer(tw_t, "Twitter/X", drop=False)
+    li_raw = tw_raw = blog_raw = seo_meta = ""
     check_raw = urls(check_t.output.raw) if check_t else ""
-    blog_raw = ""
-    seo_meta = ""
-    if seo_t:
-        raw = seo_t.output.raw
-        if SEO_DELIMITER in raw:
-            b, seo_meta = raw.split(SEO_DELIMITER, 1)
-        else:
-            b, seo_meta = raw, "SEO metadata was not returned separately."
-        blog_raw = guard.clean_numbers(urls(b), support, notes, True, "Blog")
-        seo_meta = urls(seo_meta)
-    elif blog_t:
-        blog_raw = writer(blog_t, "Blog")
+    if studio_t:
+        parts = _split_parts(studio_t.output.raw)
+        for key, label in (("blog", "Blog"), ("linkedin", "LinkedIn"), ("twitter", "Twitter/X"), ("seo", "SEO")):
+            if key in sel and not parts.get(key.upper()):
+                notes.append(f"{label}: the model did not return this section. Run again to regenerate it.")
+        blog_raw = guard.clean_numbers(urls(parts.get("BLOG", "")), support, notes, True, "Blog")
+        li_raw = guard.clean_numbers(urls(parts.get("LINKEDIN", "")), support, notes, True, "LinkedIn")
+        tw_raw = guard.clean_numbers(urls(parts.get("TWITTER", "")), support, notes, False, "Twitter/X")
+        seo_meta = urls(parts.get("SEO", ""))
+    else:
+        li_raw = writer(li_t, "LinkedIn")
+        tw_raw = writer(tw_t, "Twitter/X", drop=False)
+        if seo_t:
+            raw = seo_t.output.raw
+            if SEO_DELIMITER in raw:
+                b, seo_meta = raw.split(SEO_DELIMITER, 1)
+            else:
+                b, seo_meta = raw, "SEO metadata was not returned separately."
+            blog_raw = guard.clean_numbers(urls(b), support, notes, True, "Blog")
+            seo_meta = urls(seo_meta)
+        elif blog_t:
+            blog_raw = writer(blog_t, "Blog")
 
     note_md = guard.notes_markdown(notes)
     show = set(cfg["outputs"])  # only what the user actually selected is delivered
@@ -281,13 +361,13 @@ def _run(cfg: dict, model: str, api_key: str, on_task_done=None, safe: bool = Fa
     out["sources"] = sources if "research" in show else []
     if "research" in show:
         out["research"] = research_raw.strip() + note_md
-    if li_t and "linkedin" in show:
+    if li_raw and "linkedin" in show:
         out["linkedin"] = li_raw.strip()
-    if tw_t and "twitter" in show:
+    if tw_raw and "twitter" in show:
         out["twitter"] = tw_raw.strip()
     if check_t and "factcheck" in show:
         out["factcheck"] = check_raw.strip() + note_md
-    if seo_t:
+    if seo_meta:
         out["seo"] = seo_meta.strip()
     if "blog" in show:
         out["blog"] = blog_raw.strip()
@@ -300,12 +380,25 @@ _NOT_PARAM_ERRORS = ("api key", "quota", "429", "503", "unavailable", "high dema
 
 
 def run_studio(cfg: dict, model: str, api_key: str, on_task_done=None) -> dict:
-    """Runs the crew. If the provider rejects the optional extras (top_k / reasoning_effort),
-    it automatically retries once with only temperature + top_p."""
+    """Runs the crew. Identical requests within RESULT_CACHE_SECONDS are served from memory (0 API requests).
+    If the provider rejects the optional extras (top_k / reasoning_effort) it retries once without them."""
+    key = (cfg["topic"].strip().lower(), tuple(sorted(cfg["outputs"])), cfg["language"], cfg["tone"],
+           cfg["length"], cfg["audience"], (cfg.get("keywords") or "").strip().lower())
+    hit = _RESULT_CACHE.get(key)
+    if hit and time.time() - hit[0] < RESULT_CACHE_SECONDS:
+        if on_task_done:
+            for _ in plan_steps(cfg["outputs"]):
+                on_task_done(None)
+        return dict(hit[1])
     try:
-        return _run(cfg, model, api_key, on_task_done, safe=False)
+        out = _run(cfg, model, api_key, on_task_done, safe=False)
     except Exception as e:  # noqa: BLE001
         msg = str(e).lower()
         if any(x in msg for x in _PARAM_ERRORS) and not any(x in msg for x in _NOT_PARAM_ERRORS):
-            return _run(cfg, model, api_key, on_task_done, safe=True)
-        raise
+            out = _run(cfg, model, api_key, on_task_done, safe=True)
+        else:
+            raise
+    if len(_RESULT_CACHE) > 30:
+        _RESULT_CACHE.clear()
+    _RESULT_CACHE[key] = (time.time(), dict(out))
+    return out
