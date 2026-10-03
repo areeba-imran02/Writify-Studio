@@ -1,4 +1,8 @@
-"""DuckDuckGo search tools (free, no API key). Every result is also logged so the UI can show real sources."""
+"""DuckDuckGo search tools (free, no API key). Every result is also logged so the UI can show real sources.
+
+v2: results that share no word with the topic are dropped, so off-topic pages never reach the agents.
+"""
+import re
 import time
 
 from crewai.tools import tool
@@ -33,9 +37,20 @@ def _with_retry(fn, attempts: int = 3):
     return f"Search failed: {last}"
 
 
-def make_search_tools(sources: list):
-    """Create the search tools for ONE run. Every result URL is appended to `sources` (deduplicated)."""
+def make_search_tools(sources: list, topic: str = ""):
+    """Create the search tools for ONE run. Every result URL is appended to `sources` (deduplicated).
+
+    `topic` is used to drop results that are not about it (keeps the old behaviour if nothing matches).
+    """
     seen = set()
+    terms = {w for w in re.findall(r"\w+", topic.lower()) if len(w) > 3}
+
+    def _on_topic(results):
+        if not terms or not results:
+            return results
+        kept = [r for r in results
+                if any(t in f"{r.get('title', '')} {r.get('body', '')}".lower() for t in terms)]
+        return kept or results
 
     def _log(query, results):
         for r in results or []:
@@ -46,23 +61,25 @@ def make_search_tools(sources: list):
 
     @tool("DuckDuckGo Web Search")
     def web_search(query: str) -> str:
-        """Search the web with DuckDuckGo. Input: a short search query string.
+        """Search the web with DuckDuckGo. Input: a short search query string that contains the main topic words.
         Returns top results with title, URL and summary. Use it to find facts,
         statistics, trends and sources."""
-        res = _with_retry(lambda: list(DDGS().text(query, max_results=6)))
+        res = _with_retry(lambda: list(DDGS().text(query, max_results=8)))
         if isinstance(res, str):
             return res
+        res = _on_topic(res)[:6]
         _log(query, res)
         return _format(res)
 
     @tool("DuckDuckGo News Search")
     def news_search(query: str) -> str:
-        """Search latest news with DuckDuckGo. Input: a short search query string.
+        """Search latest news with DuckDuckGo. Input: a short search query string that contains the main topic words.
         Returns recent news items with date, URL and summary. Use it for current
         events and recent developments."""
-        res = _with_retry(lambda: list(DDGS().news(query, max_results=6)))
+        res = _with_retry(lambda: list(DDGS().news(query, max_results=8)))
         if isinstance(res, str):
             return res
+        res = _on_topic(res)[:6]
         _log(query, res)
         return _format(res)
 
