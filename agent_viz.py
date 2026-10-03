@@ -388,3 +388,28 @@ VIZ_CSS = """
 .wb-log ul{list-style:none;margin:8px 0 0;padding:0;font-size:.84rem;} .wb-log li{padding:3px 0;} .wb-log li span{display:inline-block;min-width:62px;color:#0F766E;font-weight:800;}
 @media (prefers-reduced-motion:reduce){.wb *{animation:none !important;}}
 """
+
+
+# ------------------------------------------------------- iframe rendering (always shows up)
+FONTS = ("<link rel='stylesheet' href='https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700"
+         "&family=Sora:wght@600;700&family=Manrope:wght@400;600;700;800&display=swap'>")
+
+
+def board_page(tr) -> str:
+    """Full standalone HTML page of the board (runs in an iframe, so Streamlit cannot strip anything)."""
+    return ("<!doctype html><html><head><meta charset='utf-8'>" + FONTS +
+            "<style>html,body{margin:0;padding:0;background:transparent;}" + VIZ_CSS +
+            ".wb{margin:4px 2px 12px;}</style></head><body>" + render_board(tr) + "</body></html>")
+
+
+def draw(slot, tr, height=1500):
+    """Live update: draw the board into an st.empty() placeholder."""
+    import streamlit.components.v1 as components
+    with slot.container():
+        components.html(board_page(tr), height=height, scrolling=True)
+
+
+def show(tr, height=1500):
+    """Static draw at the current position (used for finished runs)."""
+    import streamlit.components.v1 as components
+    components.html(board_page(tr), height=height, scrolling=True)
