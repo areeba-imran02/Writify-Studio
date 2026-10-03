@@ -531,6 +531,33 @@ def visible_pipeline(steps, selected, n_done):
     return pipeline_html(labels, done, active)
 
 
+# ======================================================================================
+# app.py PATCH  (only this block changes - CSS, sidebar, results etc. stay exactly as they are)
+#
+# 1) In app.py find the line:      if go:
+#    and replace EVERYTHING from that line down to (and including) the final
+#        with st.expander("Technical details"):
+#            st.code(msg)
+#    with the code below. The next section in app.py ("# --- research extras") stays untouched.
+#
+# 2) Nothing else to change: run_studio() still returns the same dict (research, blog, linkedin,
+#    twitter, seo, factcheck, sources) plus "models_used".
+# ======================================================================================
+
+def pipeline_html_live(steps, done_keys, active_keys):
+    """Progress cards that work even when agents finish out of order (parallel run)."""
+    h = '<div class="pipe">'
+    for key, name in steps:
+        if key in done_keys:
+            cls, state = "done", "Completed"
+        elif key in active_keys:
+            cls, state = "active", "In progress"
+        else:
+            cls, state = "wait", "Queued"
+        h += f'<div class="step {cls}"><b>{name}</b>{state}</div>'
+    return h + "</div>"
+
+
 if go:
     topic = st.session_state.topic.strip()
     if len(topic) < 5:
@@ -544,57 +571,46 @@ if go:
         # a blog drafted only for SEO is a background step: it runs but is not shown
         steps = [st_ for st_ in all_steps if st_[0] != "blog" or "blog" in selected]
         holder = st.empty()
-        state = {"raw": 0, "done": 0}
-        holder.markdown(pipeline_html(steps, 0, 0), unsafe_allow_html=True)
+        done_keys, active_keys = set(), set()
+        holder.markdown(pipeline_html_live(steps, done_keys, active_keys), unsafe_allow_html=True)
 
-        def on_done(_o):
-            key = all_steps[state["raw"]][0] if state["raw"] < len(all_steps) else None
-            state["raw"] += 1
-            if key != "blog" or "blog" in selected:
-                state["done"] += 1
-            holder.markdown(pipeline_html(steps, state["done"], state["done"]), unsafe_allow_html=True)
+        def on_event(kind, key, detail=""):
+            if kind == "start":
+                active_keys.add(key)
+            elif kind == "done":
+                active_keys.discard(key)
+                done_keys.add(key)
+            elif kind == "fallback":
+                st.toast(detail)          # e.g. "gemini-3.8-flash is limit. Trying the next model."
+            holder.markdown(pipeline_html_live(steps, done_keys, active_keys), unsafe_allow_html=True)
 
         cfg = dict(topic=topic, audience=audience, tone=tone, language=language, length=length,
                    keywords=keywords, outputs=selected)
         start = time.time()
         try:
-            with st.spinner("The agents are working. This can take a few minutes on the free tier."):
-                order = [MODELS[model_label]] + [m for m in MODELS.values() if m != MODELS[model_label]]
-                out = None
-                for n, mdl in enumerate(order):
-                    state["done"] = 0
-                    state["raw"] = 0
-                    holder.markdown(visible_pipeline(steps, selected, 0), unsafe_allow_html=True)
-                    try:
-                        out = run_studio(cfg, mdl, API_KEY, on_done)
-                        break
-                    except Exception as e:  # noqa: BLE001
-                        retry = any(x in str(e) for x in ("503", "UNAVAILABLE", "high demand", "429", "404", "NOT_FOUND"))
-                        if retry and n < len(order) - 1:
-                            st.toast("Model unavailable or busy. Trying the next model.")
-                            time.sleep(8)
-                            continue
-                        raise
+            with st.spinner("The agents are working in parallel. This usually takes about a minute."):
+                # fallback order (the other 3 Gemini models) is handled per step inside run_studio
+                out = run_studio(cfg, MODELS[model_label], API_KEY, on_event)
+
             out.update(topic=topic, time=dt.datetime.now().strftime("%H:%M"),
                        seconds=int(time.time() - start), agents=len(all_steps), keywords=keywords)
             st.session_state.result = out
             st.session_state.history.append(out)
-            holder.markdown(visible_pipeline(steps, selected, len(steps)), unsafe_allow_html=True)
+            holder.markdown(pipeline_html_live(steps, {k for k, _ in steps}, set()), unsafe_allow_html=True)
         except Exception as e:  # noqa: BLE001
             msg = str(e)
             if "503" in msg or "UNAVAILABLE" in msg or "high demand" in msg:
                 st.error("Gemini servers are busy right now. Please wait a minute or two and try again.")
             elif "404" in msg or "NOT_FOUND" in msg:
-                st.error("This model is no longer available. Update the MODELS list in crew_setup.py.")
-            elif "429" in msg or "quota" in msg.lower() or "rate limit" in msg.lower():
-                st.error("The Gemini free-tier limit was reached. Wait a minute, or choose a Flash-Lite model.")
+                st.error("A model is no longer available. Update the MODELS list in crew_setup.py.")
+            elif "429" in msg or "quota" in msg.lower() or "rate limit" in msg.lower() or "All Gemini models failed" in msg:
+                st.error("All 4 Gemini models hit their free-tier limit. Wait a minute and try again.")
             elif "API key" in msg or "401" in msg or "403" in msg or "invalid" in msg.lower():
                 st.error("The configured API key was rejected. Check the key in your .env file or secrets.")
             else:
                 st.error("Something went wrong. Please try again.")
             with st.expander("Technical details"):
                 st.code(msg)
-
 
 # ------------------------------------------------------- research extras
 def google_links(topic: str, keywords: str):
