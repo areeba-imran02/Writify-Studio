@@ -413,6 +413,10 @@ def get_api_key() -> str:
 
 API_KEY = get_api_key()
 
+# The model is no longer chosen by the user. The first model in MODELS is tried first and
+# run_studio() silently falls back to the next ones (3.8 Flash, Flash-Lite, ...) when one is busy or out of quota.
+PRIMARY_MODEL = list(MODELS.values())[0]
+
 
 def toggle(k: str):
     st.session_state[f"sel_{k}"] = not st.session_state[f"sel_{k}"]
@@ -427,15 +431,11 @@ def set_all(value: bool):
 with st.sidebar:
     st.markdown('<div class="brand"><span class="logo">W</span><span class="bname"><span class="w3a">Writify</span> <span class="w3b">Studio</span></span></div><div class="brand-sub">Research. Write. Verify.</div>',
                 unsafe_allow_html=True)
-    st.markdown('<div class="side-h">Model</div>', unsafe_allow_html=True)
-    model_label = st.selectbox("AI model", list(MODELS.keys()), label_visibility="collapsed")
 
     st.markdown('<div class="side-h">Writing preferences</div>', unsafe_allow_html=True)
     language = st.selectbox("Output language", LANGUAGES)
     if language == CUSTOM_LANG:
         language = st.text_input("Type any language", placeholder="e.g. Arabic, Punjabi, Spanish, French").strip()
-    if language == CUSTOM_LANG:
-        language = st.text_input("Type any language", placeholder="e.g. French, Arabic, Punjabi, Spanish").strip() or "English"
     tone = st.selectbox("Tone of voice", TONES)
     length = st.selectbox("Blog length", list(LENGTHS.keys()), index=1)
     audience = st.text_input("Target audience", "Students and young professionals")
@@ -513,37 +513,6 @@ with st.container(key="input_card"):
 
 
 # --------------------------------------------------------------- pipeline
-def pipeline_html(labels, done, active):
-    h = '<div class="pipe">'
-    for i, (_k, name) in enumerate(labels):
-        cls = "done" if i < done else ("active" if i == active else "wait")
-        state = "Completed" if i < done else ("In progress" if i == active else "Queued")
-        h += f'<div class="step {cls}"><b>{name}</b>{state}</div>'
-    return h + "</div>"
-
-
-def visible_pipeline(steps, selected, n_done):
-    """Show only the agents the user selected; background helpers (research / blog draft) stay hidden."""
-    vis = [(i, st_) for i, st_ in enumerate(steps) if st_[0] in selected]
-    labels = [v[1] for v in vis]
-    done = sum(1 for i, _ in vis if i < n_done)
-    active = next((j for j, (i, _) in enumerate(vis) if i >= n_done), -1)
-    return pipeline_html(labels, done, active)
-
-
-# ======================================================================================
-# app.py PATCH  (only this block changes - CSS, sidebar, results etc. stay exactly as they are)
-#
-# 1) In app.py find the line:      if go:
-#    and replace EVERYTHING from that line down to (and including) the final
-#        with st.expander("Technical details"):
-#            st.code(msg)
-#    with the code below. The next section in app.py ("# --- research extras") stays untouched.
-#
-# 2) Nothing else to change: run_studio() still returns the same dict (research, blog, linkedin,
-#    twitter, seo, factcheck, sources) plus "models_used".
-# ======================================================================================
-
 def pipeline_html_live(steps, done_keys, active_keys):
     """Progress cards that work even when agents finish out of order (parallel run)."""
     h = '<div class="pipe">'
@@ -574,14 +543,16 @@ if go:
         done_keys, active_keys = set(), set()
         holder.markdown(pipeline_html_live(steps, done_keys, active_keys), unsafe_allow_html=True)
 
-        def on_event(kind, key, detail=""):
-            if kind == "start":
+        def on_event(kind=None, key=None, detail=""):
+            """Progress updates from run_studio. Model switching is silent: nothing is shown to the user.
+            Defaults make it safe even if something calls it with a single argument."""
+            if kind == "start" and key:
                 active_keys.add(key)
-            elif kind == "done":
+            elif kind == "done" and key:
                 active_keys.discard(key)
                 done_keys.add(key)
-            elif kind == "fallback":
-                st.toast(detail)          # e.g. "gemini-3.8-flash is limit. Trying the next model."
+            # kind == "fallback" (a model was busy / out of quota) -> ignored on purpose, the next model
+            # is already running the same step in the background.
             holder.markdown(pipeline_html_live(steps, done_keys, active_keys), unsafe_allow_html=True)
 
         cfg = dict(topic=topic, audience=audience, tone=tone, language=language, length=length,
@@ -589,8 +560,7 @@ if go:
         start = time.time()
         try:
             with st.spinner("The agents are working in parallel. This usually takes about a minute."):
-                # fallback order (the other 3 Gemini models) is handled per step inside run_studio
-                out = run_studio(cfg, MODELS[model_label], API_KEY, on_event)
+                out = run_studio(cfg, PRIMARY_MODEL, API_KEY, on_event)
 
             out.update(topic=topic, time=dt.datetime.now().strftime("%H:%M"),
                        seconds=int(time.time() - start), agents=len(all_steps), keywords=keywords)
@@ -604,13 +574,14 @@ if go:
             elif "404" in msg or "NOT_FOUND" in msg:
                 st.error("A model is no longer available. Update the MODELS list in crew_setup.py.")
             elif "429" in msg or "quota" in msg.lower() or "rate limit" in msg.lower() or "All Gemini models failed" in msg:
-                st.error("All 4 Gemini models hit their free-tier limit. Wait a minute and try again.")
+                st.error("All Gemini models are at their free-tier limit right now. Wait a minute and try again.")
             elif "API key" in msg or "401" in msg or "403" in msg or "invalid" in msg.lower():
                 st.error("The configured API key was rejected. Check the key in your .env file or secrets.")
             else:
                 st.error("Something went wrong. Please try again.")
             with st.expander("Technical details"):
                 st.code(msg)
+
 
 # ------------------------------------------------------- research extras
 def google_links(topic: str, keywords: str):
