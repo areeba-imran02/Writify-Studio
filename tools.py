@@ -6,6 +6,7 @@ Speed notes:
 - short network timeout + quick retry so one slow search cannot stall the whole run
 """
 
+import datetime as dt
 import re
 import time
 
@@ -127,3 +128,38 @@ def make_search_tools(sources: list, topic: str = ""):
         return _format(res)
 
     return web_search, news_search
+
+
+def prefetch_evidence(topic: str, keywords: str, sources: list, max_sources: int = 12) -> str:
+    """Run the searches in plain Python (NO Gemini calls) and return a numbered evidence list.
+    This replaces the agent's search-tool loop, so research needs only ONE Gemini request."""
+    tokens = _topic_tokens(topic)
+    year = dt.date.today().year
+    kw = (keywords or "").split(",")[0].strip()
+    jobs = [("web", topic), ("web", f"{topic} statistics {year}"), ("news", topic)]
+    if kw and not kw.startswith("("):
+        jobs.append(("web", f"{topic} {kw}"))
+    seen = {s["url"] for s in sources}
+    for kind, q in jobs:
+        if len(sources) >= max_sources:
+            break
+        if kind == "web":
+            res = _cached(kind, q, lambda q=q: list(DDGS(timeout=SEARCH_TIMEOUT).text(q, max_results=MAX_RESULTS)))
+        else:
+            res = _cached(kind, q, lambda q=q: list(DDGS(timeout=SEARCH_TIMEOUT).news(q, max_results=MAX_RESULTS)))
+        if isinstance(res, str):
+            continue
+        for r in _relevant(res, tokens):
+            url = r.get("href") or r.get("url") or ""
+            if url and url not in seen and len(sources) < max_sources:
+                seen.add(url)
+                sources.append({"title": (r.get("title") or url).strip(), "url": url, "query": q,
+                                "body": (r.get("body") or "").strip(), "date": r.get("date", "")})
+    lines = []
+    for i, s in enumerate(sources, 1):
+        body = s["body"]
+        if len(body) > SUMMARY_CHARS:
+            body = body[:SUMMARY_CHARS].rsplit(" ", 1)[0] + "..."
+        d = f"Date: {s['date']}\n" if s.get("date") else ""
+        lines.append(f"[{i}] {s['title']}\nURL: {s['url']}\n{d}Summary: {body}")
+    return "\n\n".join(lines)
