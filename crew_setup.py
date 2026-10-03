@@ -283,8 +283,10 @@ def run_studio(cfg: dict, primary_model: str, api_key: str, on_event=None) -> di
              "## Suggested outline\n(5-7 section headings)\n"
              "## Gaps\n- things you could not verify"),
             tools=[web_search, news_search])
-        evidence = step("research", "research", research, start_key="research", done_key=research_done_here)
-        _cache_put(cache_key, evidence, sources)
+        evidence = run_jobs(
+            {"research": lambda: step("research", "research", research,
+                                      start_key="research", done_key=research_done_here)}, 1)["research"]
+     _cache_put(cache_key, evidence, sources)
         pump()
 
     # ---------------- 2) phase A: independent agents in parallel
