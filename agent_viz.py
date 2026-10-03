@@ -14,8 +14,8 @@ ORDER = [("research", "Researcher"), ("blog", "Blog Writer"), ("linkedin", "Link
 NAMES = dict(ORDER)
 LABELS = {"research": "Research report", "blog": "Blog post", "linkedin": "LinkedIn post",
           "twitter": "Twitter/X thread", "seo": "SEO report", "factcheck": "Fact-check"}
-ACCENT = {"research": "#0D9488", "blog": "#16A34A", "linkedin": "#E11D48",
-          "twitter": "#F59E0B", "seo": "#CA8A04", "factcheck": "#EA580C"}
+ACCENT = {"research": "#2DD4BF", "blog": "#4ADE80", "linkedin": "#FB7185",
+          "twitter": "#FBBF24", "seo": "#FACC15", "factcheck": "#FB923C"}
 OUT_FORMAT = {
     "research": "Markdown report: Abstract, Findings with [n] citations, References",
     "blog": "Markdown post: title, H2/H3 headings, conclusion + CTA",
@@ -214,19 +214,26 @@ def _agent_card(tr, key):
     if st == "off":
         pill = "Not selected"
     elif st == "queued":
-        pill = "Waiting"
+        pill = "Standby"
     elif st == "working":
         pill = "Working..."
     else:
         pill = f"Done in {a['ms'] / 1000:.1f}s" if a["ms"] else "Done"
+    if st == "working":
+        screen = '<i></i><i></i><i></i><i></i><div class="wb-cur">writing<span>_</span></div>'
+    elif st == "done" and a["output"]:
+        screen = f'<div class="wb-st">{esc(_flat(a["output"].lstrip("# ").replace("*", ""), 120))}</div>'
+    else:
+        screen = "<i></i><i></i><i></i><i></i>"
     card = (f'<div class="wb-ag {st}" style="--ac:{ACCENT[key]}"><div class="wb-stage">'
             f'<div class="wb-lab">{esc(name)}</div>'
-            '<div class="wb-scr"><i></i><i></i><i></i></div>'
-            '<div class="wb-rb"><b class="an"></b><b class="hd"><u></u><u></u></b><b class="bd"></b></div>'
-            '<div class="wb-dk"></div></div>'
+            f'<div class="wb-scr">{screen}</div>'
+            '<div class="wb-rb"><b class="an"></b><b class="hd"><u></u><u></u><s></s></b>'
+            '<b class="bd"></b><b class="ar l"></b><b class="ar r"></b></div>'
+            '<div class="wb-dk"><span></span></div></div>'
             f'<div class="wb-pill {st}">{esc(pill)}</div>')
     if st == "off":
-        return card + '<div class="wb-row">Skipped: you did not select this output.</div></div>'
+        return card + '<div class="wb-row">You did not select this output.</div></div>'
     card += f'<div class="wb-row"><em>Gets</em>{esc(_input_label(tr, key))}</div>'
     if tr.lean and key in LEAN_KEYS:
         card += '<div class="wb-row"><em>Runs as</em>One request with the Content Studio Writer</div>'
@@ -236,9 +243,7 @@ def _agent_card(tr, key):
     if a["prompt"]:
         card += f'<details><summary>Prompt this agent received</summary><div class="wb-tx">{_block(a["prompt"], 900)}</div></details>'
     if a["output"]:
-        card += (f'<details><summary>Output it produced</summary><div class="wb-tx">{_block(a["output"], 1400)}</div></details>')
-    elif st == "working":
-        card += '<div class="wb-row wb-dim">Writing now...</div>'
+        card += f'<details><summary>Output it produced</summary><div class="wb-tx">{_block(a["output"], 1400)}</div></details>'
     return card + "</div>"
 
 
@@ -288,7 +293,7 @@ def render_board(tr) -> str:
     h += "</div>"
 
     # 3. agents
-    h += '<div class="wb-box"><div class="wb-h"><b>3</b>Agents: each one gets its prompt and returns a structured output</div>'
+    h += '<div class="wb-box crew"><div class="wb-h"><b>3</b>The agent crew: each one gets its prompt and returns a structured output</div>'
     if tr.lean and any(k in run_keys for k in LEAN_KEYS):
         h += '<div class="wb-note">Blog, LinkedIn, Twitter/X and SEO share one request (lean mode), so they start and finish together.</div>'
     h += '<div class="wb-ags">' + "".join(_agent_card(tr, k) for k, _ in ORDER) + "</div></div>"
@@ -343,7 +348,7 @@ VIZ_CSS = """
 .wb-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px;}
 .wb-line em,.wb-row em{font-style:normal;font-weight:800;font-size:.76rem;color:#3F6F66;min-width:96px;display:inline-block;}
 .wb-chip{display:inline-block;padding:4px 12px;border-radius:999px;border:1.5px solid var(--ac);background:#fff;font-size:.82rem;font-weight:700;color:#0F3D36;}
-.wb-chip.sel{background:var(--ac);color:#fff;} .wb-chip small{font-weight:600;opacity:.8;margin-left:4px;}
+.wb-chip.sel{background:var(--ac);color:#052E2A;} .wb-chip small{font-weight:600;opacity:.8;margin-left:4px;}
 .wb-note{background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:10px;padding:8px 12px;margin:6px 0 10px;font-size:.86rem;color:#134E4A;}
 .wb-flow{margin-top:8px;padding:8px 12px;border-radius:10px;background:#E3F4EC;font-size:.86rem;color:#0B3B36;font-weight:600;}
 .wb-ok{padding:8px 12px;border-radius:10px;background:#DCFCE7;color:#14532D;font-weight:700;font-size:.88rem;}
@@ -353,38 +358,55 @@ VIZ_CSS = """
 .wb-gl{margin:0;padding-left:20px;font-size:.88rem;} .wb-gl li{margin-bottom:4px;}
 .wb details{margin-top:8px;} .wb summary{cursor:pointer;font-weight:700;font-size:.84rem;color:#0F766E;}
 .wb-tx{margin-top:6px;padding:10px 12px;border-radius:10px;background:#F1FCF7;border:1px solid #CFE9E0;font-size:.8rem;line-height:1.5;color:#0F3D36;max-height:260px;overflow:auto;word-break:break-word;}
-.wb-ags{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start;}
+.wb-box.crew{background:radial-gradient(900px 300px at 50% -10%,#16304F 0%,#0B1424 60%);border:1.5px solid #1E3A5F;padding:18px 20px 20px;}
+.wb-box.crew .wb-h{color:#F1F5F9;} .wb-box.crew .wb-h b{background:#2DD4BF;color:#04201C;}
+.wb-box.crew .wb-note{background:#1E293B;border-left-color:#FBBF24;color:#E2E8F0;}
+.wb-ags{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;align-items:start;}
 @media (max-width:980px){.wb-ags{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media (max-width:620px){.wb-ags{grid-template-columns:minmax(0,1fr);}}
-.wb-ag{background:#F7FCFA;border:1.5px solid #CFE9E0;border-radius:16px;padding:14px 14px 12px;transition:box-shadow .2s,border-color .2s;}
-.wb-ag.off{opacity:.45;filter:grayscale(.8);}
-.wb-ag.working{border-color:var(--ac);box-shadow:0 0 0 4px rgba(249,115,22,.12),0 0 22px -4px var(--ac);}
-.wb-ag.done{border-color:#16A34A;}
-.wb-stage{position:relative;height:134px;margin-bottom:8px;}
-.wb-lab{position:absolute;top:0;left:0;right:0;text-align:center;font-size:.66rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--ac);}
-.wb-scr{position:absolute;top:18px;left:50%;transform:translateX(-50%);width:116px;height:42px;background:#0B1220;border-radius:6px;padding:8px 10px;box-shadow:0 0 0 2px #1F2937;}
-.wb-scr i{display:block;height:4px;border-radius:3px;background:var(--ac);margin-bottom:5px;width:40%;opacity:.3;}
-.wb-scr i:nth-child(2){width:80%;} .wb-scr i:nth-child(3){width:58%;}
-.wb-ag.working .wb-scr{box-shadow:0 0 0 2px #1F2937,0 0 16px var(--ac);}
-.wb-ag.working .wb-scr i{opacity:1;animation:wbtype 1.3s ease-in-out infinite;} .wb-ag.working .wb-scr i:nth-child(2){animation-delay:.25s;} .wb-ag.working .wb-scr i:nth-child(3){animation-delay:.5s;}
-.wb-ag.done .wb-scr i{opacity:.9;}
-@keyframes wbtype{0%,100%{width:18%}50%{width:92%}}
-.wb-rb{position:absolute;top:62px;left:50%;transform:translateX(-50%);width:40px;height:44px;}
-.wb-ag.working .wb-rb{animation:wbbob 1s ease-in-out infinite;}
-@keyframes wbbob{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(-3px)}}
-.wb-rb b{display:block;position:absolute;font-size:0;}
-.wb-rb .an{left:19px;top:-2px;width:2px;height:8px;background:#94A3B8;}
-.wb-rb .hd{left:4px;top:5px;width:32px;height:24px;border-radius:10px;background:#fff;border:2px solid #CBD5E1;}
-.wb-rb .hd u{position:absolute;top:7px;left:5px;width:7px;height:7px;border-radius:50%;background:#94A3B8;text-decoration:none;}
-.wb-rb .hd u:nth-child(2){left:auto;right:5px;}
-.wb-rb .bd{left:9px;top:30px;width:22px;height:14px;border-radius:8px 8px 5px 5px;background:#fff;border:2px solid #CBD5E1;}
-.wb-ag.working .wb-rb .hd u{background:var(--ac);box-shadow:0 0 8px var(--ac);}
-.wb-ag.done .wb-rb .hd u{background:#16A34A;box-shadow:0 0 6px #16A34A;}
-.wb-dk{position:absolute;top:100px;left:50%;transform:translateX(-50%);width:156px;height:28px;border-radius:9px;background:linear-gradient(#41464B,#24282C);box-shadow:0 4px 10px rgba(0,0,0,.22);}
-.wb-pill{display:inline-block;padding:3px 11px;border-radius:999px;font-size:.74rem;font-weight:800;margin-bottom:8px;background:#E5E7EB;color:#374151;}
-.wb-pill.working{background:#FFEDD5;color:#7C2D12;} .wb-pill.done{background:#DCFCE7;color:#14532D;}
-.wb-row{font-size:.82rem;line-height:1.45;margin-bottom:5px;color:#0F3D36;}
-.wb-row em{min-width:62px;}
+.wb-ag{background:linear-gradient(180deg,#111E33,#0D1626);border:1.5px solid #243B5A;border-radius:18px;padding:14px 14px 14px;transition:box-shadow .25s,border-color .25s;}
+.wb-ag.off{opacity:.33;filter:grayscale(1);}
+.wb-ag.working{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac),0 0 34px -4px var(--ac);}
+.wb-ag.done{border-color:#22C55E;box-shadow:0 0 18px -8px #22C55E;}
+.wb-stage{position:relative;height:236px;margin-bottom:10px;}
+.wb-lab{position:absolute;top:0;left:0;right:0;text-align:center;font-family:'Sora',sans-serif;font-size:.86rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);text-shadow:0 0 14px var(--ac);}
+.wb-scr{position:absolute;top:30px;left:50%;transform:translateX(-50%);width:84%;height:92px;background:#030812;border-radius:10px;padding:11px 13px;box-shadow:0 0 0 3px #1E2B40,inset 0 0 20px rgba(0,0,0,.8);overflow:hidden;}
+.wb-scr i{display:block;height:6px;border-radius:4px;background:var(--ac);margin-bottom:8px;width:45%;opacity:.28;}
+.wb-scr i:nth-child(2){width:85%;} .wb-scr i:nth-child(3){width:65%;} .wb-scr i:nth-child(4){width:30%;}
+.wb-ag.working .wb-scr{box-shadow:0 0 0 3px #1E2B40,0 0 26px var(--ac),inset 0 0 20px rgba(0,0,0,.8);}
+.wb-ag.working .wb-scr i{opacity:1;box-shadow:0 0 8px var(--ac);animation:wbtype 1.3s ease-in-out infinite;}
+.wb-ag.working .wb-scr i:nth-child(2){animation-delay:.2s;} .wb-ag.working .wb-scr i:nth-child(3){animation-delay:.4s;} .wb-ag.working .wb-scr i:nth-child(4){animation-delay:.6s;}
+@keyframes wbtype{0%,100%{width:20%}50%{width:94%}}
+.wb-cur{position:absolute;right:12px;bottom:7px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.7rem;font-weight:700;color:var(--ac);} .wb-cur span{animation:wbblink 1s steps(1) infinite;}
+@keyframes wbblink{50%{opacity:0}}
+.wb-st{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.7rem;line-height:1.45;color:#E2E8F0;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;border-left:3px solid var(--ac);padding-left:8px;}
+.wb-rb{position:absolute;top:118px;left:50%;transform:translateX(-50%);width:84px;height:92px;}
+.wb-ag.working .wb-rb{animation:wbbob .9s ease-in-out infinite;}
+@keyframes wbbob{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(-5px)}}
+.wb-rb b,.wb-rb s{display:block;position:absolute;font-size:0;text-decoration:none;}
+.wb-rb .an{left:40px;top:0;width:4px;height:14px;background:#94A3B8;border-radius:2px;}
+.wb-rb .an::after{content:"";position:absolute;left:-4px;top:-8px;width:12px;height:12px;border-radius:50%;background:#64748B;}
+.wb-ag.working .wb-rb .an::after{background:var(--ac);box-shadow:0 0 12px var(--ac);}
+.wb-ag.done .wb-rb .an::after{background:#22C55E;box-shadow:0 0 10px #22C55E;}
+.wb-rb .hd{left:10px;top:12px;width:64px;height:48px;border-radius:18px;background:linear-gradient(#FFFFFF,#E2E8F0);border:3px solid #94A3B8;}
+.wb-rb .hd u{position:absolute;top:15px;left:12px;width:14px;height:14px;border-radius:50%;background:#475569;text-decoration:none;}
+.wb-rb .hd u:nth-child(2){left:auto;right:12px;}
+.wb-rb .hd s{left:22px;top:34px;width:14px;height:5px;border-bottom:3px solid #94A3B8;border-radius:0 0 12px 12px;}
+.wb-ag.working .wb-rb .hd u{background:var(--ac);box-shadow:0 0 14px var(--ac);}
+.wb-ag.done .wb-rb .hd u{background:#16A34A;box-shadow:0 0 10px #22C55E;}
+.wb-ag.working .wb-rb .hd s{border-bottom-color:var(--ac);}
+.wb-rb .bd{left:20px;top:62px;width:44px;height:30px;border-radius:14px 14px 8px 8px;background:linear-gradient(#FFFFFF,#CBD5E1);border:3px solid #94A3B8;}
+.wb-rb .ar{top:66px;width:12px;height:22px;border-radius:7px;background:#E2E8F0;border:3px solid #94A3B8;}
+.wb-rb .ar.l{left:6px;} .wb-rb .ar.r{right:6px;}
+.wb-ag.working .wb-rb .ar.l{animation:wbtap .45s ease-in-out infinite;} .wb-ag.working .wb-rb .ar.r{animation:wbtap .45s ease-in-out .22s infinite;}
+@keyframes wbtap{0%,100%{transform:translateY(0)}50%{transform:translateY(5px)}}
+.wb-dk{position:absolute;top:176px;left:50%;transform:translateX(-50%);width:94%;height:44px;border-radius:12px 12px 8px 8px;background:linear-gradient(#4B5259,#262B31);border-top:4px solid var(--ac);box-shadow:0 8px 16px rgba(0,0,0,.5),0 -2px 18px -6px var(--ac);}
+.wb-dk span{position:absolute;left:50%;top:14px;transform:translateX(-50%);width:40%;height:10px;border-radius:5px;background:repeating-linear-gradient(90deg,#1B1F24 0 8px,#2E343B 8px 10px);}
+.wb-pill{display:inline-block;padding:5px 14px;border-radius:999px;font-size:.8rem;font-weight:800;margin-bottom:10px;background:#1E293B;color:#94A3B8;border:1px solid #334155;}
+.wb-pill.working{background:var(--ac);color:#04201C;border-color:var(--ac);box-shadow:0 0 16px -2px var(--ac);} .wb-pill.done{background:#14532D;color:#BBF7D0;border-color:#22C55E;}
+.wb-ag .wb-row{font-size:.82rem;line-height:1.5;margin-bottom:5px;color:#CBD5E1;}
+.wb-ag .wb-row em{min-width:62px;color:#94A3B8;}
+.wb-ag summary{color:var(--ac);} .wb-ag .wb-tx{background:#070D1A;border-color:#1E2B40;color:#E2E8F0;}
 .wb-log ul{list-style:none;margin:8px 0 0;padding:0;font-size:.84rem;} .wb-log li{padding:3px 0;} .wb-log li span{display:inline-block;min-width:62px;color:#0F766E;font-weight:800;}
 @media (prefers-reduced-motion:reduce){.wb *{animation:none !important;}}
 """
@@ -402,14 +424,14 @@ def board_page(tr) -> str:
             ".wb{margin:4px 2px 12px;}</style></head><body>" + render_board(tr) + "</body></html>")
 
 
-def draw(slot, tr, height=1500):
+def draw(slot, tr, height=1800):
     """Live update: draw the board into an st.empty() placeholder."""
     import streamlit.components.v1 as components
     with slot.container():
         components.html(board_page(tr), height=height, scrolling=True)
 
 
-def show(tr, height=1500):
+def show(tr, height=1800):
     """Static draw at the current position (used for finished runs)."""
     import streamlit.components.v1 as components
     components.html(board_page(tr), height=height, scrolling=True)
