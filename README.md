@@ -77,7 +77,7 @@ Generated content can be produced in:
 * English
 * Urdu
 * Roman Urdu
-* Hindi
+* Custom language 
 
 The application interface itself remains in English.
 
