@@ -435,5 +435,3 @@ def show(tr, height=1800):
     """Static draw at the current position (used for finished runs)."""
     import streamlit.components.v1 as components
     components.html(board_page(tr), height=height, scrolling=True)
-   from viz_light import LIGHT_CSS
-   VIZ_CSS = VIZ_CSS + LIGHT_CSS
