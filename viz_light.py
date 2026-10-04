@@ -1,11 +1,10 @@
-"""Light theme for the Agent Workflow board (replaces the dark-blue 'crew' section).
+"""Run once inside your Writify-Studio folder:  python apply_light.py
+Puts the light theme for the agent board directly INTO agent_viz.py (no extra file needed).
+Safe to run twice. To undo: delete everything from the line '# --- LIGHT THEME START' to the end of agent_viz.py."""
+import sys
 
-Only colours and layout of the crew cards change. Markup, logic and animations stay the same.
-It is appended after VIZ_CSS, so every rule here overrides the old dark one.
-To go back to the old look, just delete the two lines you added at the end of agent_viz.py.
-"""
-
-LIGHT_CSS = """
+MARK = "# --- LIGHT THEME START"
+CSS = r'''
 /* ===== Crew section: light, clean, same teal brand ===== */
 .wb-box.crew{background:#EEF6F3;border:1.5px solid #CFE3DC;padding:18px 20px 20px;}
 .wb-box.crew .wb-h{color:#052E2A;}
@@ -65,4 +64,30 @@ LIGHT_CSS = """
 /* expanders */
 .wb-ag summary{color:#0F766E;}
 .wb-ag .wb-tx{background:#F4F8F7;border-color:#D5E4DE;color:#1F3A35;}
-"""
+'''
+
+BLOCK = "\n\n" + MARK + " (appended after VIZ_CSS, so it overrides the dark crew styling) ---\nVIZ_CSS = VIZ_CSS + r\"\"\"" + CSS + "\"\"\"\n"
+
+try:
+    with open("agent_viz.py", "r", encoding="utf-8", newline="") as f:
+        raw = f.read()
+except FileNotFoundError:
+    sys.exit("agent_viz.py not found here. Run this script inside the Writify-Studio folder.")
+
+crlf = "\r\n" in raw
+text = raw.replace("\r\n", "\n")
+
+if "VIZ_CSS = " not in text and "VIZ_CSS=" not in text:
+    sys.exit("This does not look like the right agent_viz.py (VIZ_CSS not found). Nothing changed.")
+if MARK in text:
+    print("Already applied. If it still looks dark, restart Streamlit (see steps).")
+    sys.exit(0)
+if "from viz_light import" in text:
+    text = text.replace("from viz_light import LIGHT_CSS\n", "").replace("VIZ_CSS = VIZ_CSS + LIGHT_CSS\n", "")
+
+text = text.rstrip("\n") + "\n" + BLOCK
+if crlf:
+    text = text.replace("\n", "\r\n")
+with open("agent_viz.py", "w", encoding="utf-8", newline="") as f:
+    f.write(text)
+print("Done: light theme added to agent_viz.py. Now restart Streamlit.")
