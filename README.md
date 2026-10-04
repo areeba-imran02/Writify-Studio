@@ -23,6 +23,8 @@ The platform can produce:
 
 Research runs first, and only the content agents required for the selected deliverables are executed.
 
+While the agents work, the interface shows a **live Agent Workflow Board** so you can watch every stage of the run in real time (see [Live Agent Workflow Board](#live-agent-workflow-board)).
+
 ---
 
 ## Multi-Agent Team
@@ -144,6 +146,58 @@ Research sources are displayed in the application with:
 
 Sources are also included in the downloadable research output.
 
+### Live Agent Workflow Board
+
+Writify Studio does not hide what the agents are doing. When you press **Generate content**, a visual board appears on the front end and updates live while the run is in progress. After the run finishes, the same board stays available inside an expander named **"Agent workflow: how this run was processed"**, placed above the result tabs.
+
+The board is built from a trace of what really happens in the run (plan, retrieval, each agent, guard, delivery). It is not a fake animation: every status, timing, source count and output shown on it comes from the actual pipeline.
+
+**What the board shows**
+
+| Part | What you see |
+| ---- | ------------ |
+| **Your query** | The topic, plus chips for the language, tone, blog length and target audience used for this run |
+| **Phase strip** | Five phases that light up in order: Plan, Retrieve (RAG), Agents write, Guard, Deliver |
+| **1. Plan** | Which outputs you selected and which agents will actually run. If SEO is selected without Blog, a note explains that the Blog Writer runs in the background and is not shown in the results |
+| **2. Retrieve** | The web searches that were made (with the number of sources each one returned), a collapsible list of the collected sources with titles and domains, and a short explanation of how this evidence flows into the agents and the Guard |
+| **3. The agent crew** | One card per agent (see below) |
+| **4. Guard** | The result of the code-level check of links and numbers against the real sources, listing any fixes that were applied |
+| **5. Deliver** | The final deliverables with their word counts |
+| **Event timeline** | A collapsible, time-stamped log of the run (for example "Started", "Finished", "Guard", "Delivered") |
+
+**The agent crew**
+
+Each of the six agents is shown as an animated robot sitting at its own desk with a small monitor:
+
+* **Not selected**: the agent is greyed out and compact, with a note that its output was not selected.
+* **Standby**: the agent is waiting for its turn.
+* **Working...**: the robot types, the monitor shows a live "writing" animation and the card is highlighted.
+* **Done in X s**: the monitor shows the first lines of the real output and the time the agent took.
+
+Every active card also explains the agent's job:
+
+* **Gets**: what the agent receives as input (for example the number of real web sources, the research report, the blog draft, or every generated deliverable for the Fact-Checker)
+* **Tool**: the tool it uses (for the Researcher: DuckDuckGo search)
+* **Runs as**: shown when the lean mode groups several writers into one request
+* **Returns**: the exact output format the agent produces
+
+Two collapsible sections on each finished card let you inspect the run in detail:
+
+* **Prompt this agent received**
+* **Output it produced**
+
+**Lean mode**
+
+To stay within the Gemini free tier, the Blog, LinkedIn, Twitter/X and SEO writers can run as a single request handled by the Content Studio Writer. The board shows this clearly, and those agents start and finish together.
+
+**Other behaviour**
+
+* If the same inputs were used in a recent run, the result is served from cache and the board states this in the timeline.
+* If a run stops before delivery, the phase strip turns to an error state and a message explains that nothing was lost.
+* The board is plain HTML and CSS (no JavaScript) rendered in its own frame, so it displays reliably in Streamlit.
+* Animations are switched off automatically for users who prefer reduced motion.
+* The board can never break a generation: all its hooks are wrapped so that a display error is ignored by the pipeline.
+
 ### Export
 
 Individual outputs can be downloaded as Markdown files.
@@ -201,6 +255,12 @@ The application is designed to work with Google's Gemini free tier and does not 
 
 The actual execution pipeline is dynamically built according to the user's selected deliverables.
 
+The Agent Workflow Board follows the same flow on the front end:
+
+```text
+   Plan  ->  Retrieve (RAG)  ->  Agents write  ->  Guard  ->  Deliver
+```
+
 ---
 
 ## Project Structure
@@ -211,6 +271,7 @@ writify-studio/
 ├── app.py
 ├── crew_setup.py
 ├── tools.py
+├── agent_viz.py
 ├── requirements.txt
 ├── README.md
 ├── PROMPT.md
@@ -228,10 +289,13 @@ writify-studio/
 Contains the Streamlit interface, session state, generation workflow, output tabs, downloads, history, and UI styling.
 
 **`crew_setup.py`**
-Defines the CrewAI agents, tasks, model configuration, and dynamic crew pipeline.
+Defines the CrewAI agents, tasks, model configuration, and dynamic crew pipeline. It also reports each step of the run to the Agent Workflow Board.
 
 **`tools.py`**
 Contains the DuckDuckGo search tools and source collection logic.
+
+**`agent_viz.py`**
+Contains the Agent Workflow Board: the trace that records what happens during a run and the HTML/CSS that draws the live board (phase strip, agent crew, guard, delivery and event timeline).
 
 **`requirements.txt`**
 Contains the Python dependencies required to run the application.
@@ -450,6 +514,8 @@ AI-generated content should still be reviewed by the user before publication, es
         ↓
 9. Download individual files or complete ZIP package
 ```
+
+While steps 4 to 7 are running, the Agent Workflow Board shows each agent's status live. Afterwards, it remains available above the result tabs for review.
 
 ---
 
